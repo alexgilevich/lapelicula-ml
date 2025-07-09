@@ -6,7 +6,7 @@ from data_pipeline import MovieLensPipeline
 
 model: Model = None
 movie_train_data_df = user_train_data_df = y_df = users_with_features_df = all_movies_with_links_df = movies_dict = None
-def preprocess() -> dict[int, dict[str, str | int]]:
+def preprocess(movielens_data_path: str) -> dict[int, dict[str, str | int]]:
     """
     Preprocesses movie and user training data, creating and returning a structured 
     dictionary of movies with corresponding information.
@@ -16,7 +16,7 @@ def preprocess() -> dict[int, dict[str, str | int]]:
     :return: A structured dictionary containing processed movie data with titles, genres and links. The map is consumed later by C# code.
     """
     global movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_with_links_df, movies_dict
-    pipeline = MovieLensPipeline("./data")
+    pipeline = MovieLensPipeline(movielens_data_path)
     movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_with_links_df, _ = pipeline.run()
     
     movies_dict = {
@@ -27,7 +27,7 @@ def preprocess() -> dict[int, dict[str, str | int]]:
 
     return movies_dict
 
-def train() -> None:
+def train(model_save_path: str) -> None:
     """
     Train Neural Network model on preprocessed data.
 
@@ -38,10 +38,10 @@ def train() -> None:
         raise ValueError("Data is not preprocessed yet")
     
     global model
-    model = Model(movie_train_data_df, user_train_data_df, y_df, model_save_path='./model_artifacts/model_v44.keras', num_outputs=128)
+    model = Model(movie_train_data_df, user_train_data_df, y_df, model_save_path, num_outputs=128)
     model.train()
 
-def recommend(movie_ids: list[int] = [], **preferences: float) -> list[tuple[str, float]]:
+def recommend(movie_ids: list[int] = None, preferences: dict[str, float] = None) -> list[tuple[str, float]]:
     """
     Recommend items based on the given user preferences.
 
@@ -58,7 +58,7 @@ def recommend(movie_ids: list[int] = [], **preferences: float) -> list[tuple[str
     """
     if not is_trained() or all_movies_with_links_df is None:
         raise ValueError("Model is not trained yet")
-
+    
     if __debug__:
         print("Predicting for preferences: ", preferences)
 
@@ -84,37 +84,40 @@ def is_trained() -> bool:
 
 
 if __name__ == '__main__':
-    preprocess()
-    train()
-
+    preprocess('./data/')
+    train('./model_artifacts/model_v44.keras')
+    
+    def recommend_internal(movie_ids: list[int] = None, **preferences: float) -> list[tuple[str, float]]:
+        recommend(movie_ids, preferences)
+    
     print('\n\nfirst user (should be more action and adventure movies):')
-    predictions = recommend(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5 )
+    predictions = recommend_internal(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5 )
     for pred in predictions:
         print(pred)
 
     print('\n\nsecond user (should be more kids-oriented movies and cartoons):')
-    predictions = recommend(kids = 5, animation = 5, adventure = 4.5, comedy = 4.5, mystery = 2, crime = 1, horror = 0.5, sci_fi = 4)
+    predictions = recommend_internal(kids = 5, animation = 5, adventure = 4.5, comedy = 4.5, mystery = 2, crime = 1, horror = 0.5, sci_fi = 4)
     for pred in predictions:
         print(pred)
 
     print('\n\nthird user (should be more romance-oriented movies):')
-    predictions = recommend( comedy = 4.5, romance = 5, mystery = 2, crime = 0.5, horror = 0.5, sci_fi = 1.5)
+    predictions = recommend_internal( comedy = 4.5, romance = 5, mystery = 2, crime = 0.5, horror = 0.5, sci_fi = 1.5)
     for pred in predictions:
         print(pred)
 
     print('\n\nfourth user (should be only kids-oriented movies and cartoons):')
-    predictions = recommend(kids = 5, animation = 5, adventure = 4.5)
+    predictions = recommend_internal(kids = 5, animation = 5, adventure = 4.5)
     for pred in predictions:
         print(pred)
 
 
     print('\n\nfifth user (should be more action and sci-fi movies):')
-    predictions = recommend(action = 5,  sci_fi = 4.5 )
+    predictions = recommend_internal(action = 5,  sci_fi = 4.5 )
     for pred in predictions:
         print(pred)
 
     print('\n\nsixth user (should be more comedy and romance movies):')
-    predictions = recommend(comedy = 4.5,  romance = 4.5 )
+    predictions = recommend_internal(comedy = 4.5,  romance = 4.5 )
     for pred in predictions:
         print(pred)
     
@@ -138,7 +141,7 @@ if __name__ == '__main__':
         rated_movies = rated_movies_df['movieId'].unique()
         
         
-        predictions = recommend(rated_movies, **user_dict)
+        predictions = recommend_internal(rated_movies, **user_dict)
         for pred in predictions:
             pred = (rated_movies_df[rated_movies_df['movieId'] == pred[0]]['rating'].item(), ) + pred
             print(pred)
