@@ -18,12 +18,15 @@ def preprocess(movielens_data_path: str) -> dict[int, dict[str, str | int]]:
     global movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_with_links_df, movies_dict
     pipeline = MovieLensPipeline(movielens_data_path)
     movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_with_links_df, _ = pipeline.run()
-    
+
     movies_dict = {
         movieId: movie_row.to_dict() for movieId, movie_row in all_movies_with_links_df.iterrows()
     }
 
-    all_movies_with_links_df.drop(columns=['title', 'genres', 'genre_partition0', 'genre_partition1', 'rating_count', 'rating_avg', 'weight', 'imdbId', 'tmdbId'], inplace=True)
+    all_movies_with_links_df.drop(
+        columns=['title', 'year', 'genres', 'genre_partition0', 'genre_partition1', 'rating_count', 'rating_avg', 'weight', 'imdbId', 'tmdbId', 'origin_countries', 'release_date', 'description', 'budget', 'poster_uri'],
+        errors='ignore',
+        inplace=True)
 
     return movies_dict
 
@@ -66,7 +69,11 @@ def recommend(movie_ids: list[int] = None, preferences: dict[str, float] = None)
     if __debug__:
         print("All preferences: ", preferences.to_dict())
 
-    predictions = model.predict(preferences, all_movies_with_links_df.loc[movie_ids] if movie_ids else all_movies_with_links_df)
+    if movie_ids:
+        movie_ids = all_movies_with_links_df.index.intersection(movie_ids)
+        predictions = model.predict(preferences, all_movies_with_links_df.loc[movie_ids])
+    else:
+        predictions = model.predict(preferences, all_movies_with_links_df)
     
     return [
         (movie_id, score, movies_dict[movie_id]['title'], movies_dict[movie_id]['genres'], movies_dict[movie_id]['tmdbId'])
@@ -85,10 +92,10 @@ def is_trained() -> bool:
 
 if __name__ == '__main__':
     preprocess('./data/')
-    train('./model_artifacts/model_v44.keras')
+    train('./artifacts/model.keras')
     
     def recommend_internal(movie_ids: list[int] = None, **preferences: float) -> list[tuple[str, float]]:
-        recommend(movie_ids, preferences)
+        return recommend(movie_ids, preferences)
     
     print('\n\nfirst user (should be more action and adventure movies):')
     predictions = recommend_internal(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5 )
