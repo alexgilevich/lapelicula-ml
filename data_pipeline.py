@@ -1,7 +1,10 @@
+import datetime
 import itertools
 import logging
+import os
 import random
-
+from concurrent.futures import ThreadPoolExecutor
+from os import path
 import pandas as pd
 import sklearn.utils
 from pandas.core.array_algos import quantile
@@ -12,6 +15,7 @@ from sklearn.metrics import pairwise_distances
 from scipy.spatial.distance import jaccard
 import kmedoids
 from features import COMBINED_GENRE_FEATURES
+from tmdb import TMDBClient, TMDBMovie
 
 logger = logging.getLogger(__name__)
 handler = logging.StreamHandler()
@@ -34,8 +38,13 @@ class MovieLensPipeline:
     :type csv_data_path: str
     """
 
-    def __init__(self, csv_data_path):
+    def __init__(self, csv_data_path, enable_weighted_average = False, enable_combined_genres = False, enable_extra_user_features = False, enable_extra_movie_features = False, enable_oversampling_by_rating = False):
         self.csv_data_path = csv_data_path
+        self.enable_weighted_average = enable_weighted_average
+        self.enable_combined_genres = enable_combined_genres
+        self.enable_extra_movie_features = enable_extra_movie_features
+        self.enable_extra_user_features = enable_extra_user_features
+        self.enable_oversampling_by_rating = enable_oversampling_by_rating
         self.genres_n_clusters = [35, 55]
 
 
@@ -78,7 +87,7 @@ class MovieLensPipeline:
 
         # we need to generate movies dict later on to pass back to C#
         all_movies_df = all_movies_df.join(all_links_df, how="left", lsuffix='_movies', rsuffix='_links')
-
+        all_movies_df = self.load_additional_movie_attributes(all_movies_df)
         return movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_df, all_ratings_df
 
     def _get_training_data(self, all_movies_df: pd.DataFrame, all_ratings_df: pd.DataFrame, users_with_features_df: pd.DataFrame) \
@@ -96,7 +105,7 @@ class MovieLensPipeline:
             the Y labels used as the output labels.
         """
 
-        all_movies_df = all_movies_df.drop(columns=['genre_partition' + str(i) for i in range(len(self.genres_n_clusters))] + ['rating_count', 'rating_avg', 'weight'])
+        all_movies_df = all_movies_df.drop(columns=['genre_partition' + str(i) for i in range(len(self.genres_n_clusters))] + ['rating_count', 'rating_avg', 'weight', 'year'], errors='ignore')
 
         # We need to keep the same number of rows in all training data dataframes as they are later used in dot product in Neural Network. 
         # Therefore, we join and then split again.
@@ -156,12 +165,13 @@ class MovieLensPipeline:
         one_hot_matrix = mlb.fit_transform(genres_series)
         one_hot_df = pd.DataFrame(one_hot_matrix, columns=mlb.classes_, index=genres_series.index)
 
-        def build_combined_genre_feature(genres_in_feature: set[str]) -> (str, pd.Series):
-            return "_".join(sorted(genres_in_feature)), genres_series.apply(lambda genres: genres_in_feature.issubset(set(genres))).astype(int)
+        if self.enable_combined_genres:
+            def build_combined_genre_feature(genres_in_feature: set[str]) -> (str, pd.Series):
+                return "_".join(sorted(genres_in_feature)), genres_series.apply(lambda genres: genres_in_feature.issubset(set(genres))).astype(int)
 
-        for combined_genre in COMBINED_GENRE_FEATURES:
-            feature_name, series = build_combined_genre_feature(combined_genre)
-            one_hot_df[feature_name] = series
+            for combined_genre in COMBINED_GENRE_FEATURES:
+                feature_name, series = build_combined_genre_feature(combined_genre)
+                one_hot_df[feature_name] = series
 
         return one_hot_df
 
@@ -180,16 +190,19 @@ class MovieLensPipeline:
                  of the corresponding genre.
         """
 
-        def generate_combined_genres(genres: list[str]) -> list[str] :
-            genres = set(genres)
-            for combined_genre in COMBINED_GENRE_FEATURES:
-                if combined_genre.issubset(genres):
-                    genres.add('_'.join(sorted(combined_genre)))
-            return genres
 
         all_ratings_df = all_ratings_df.copy()
 
-        all_ratings_df['genres'] = all_ratings_df['genres'].apply(generate_combined_genres)
+        if self.enable_combined_genres:
+            def generate_combined_genres(genres: list[str]) -> list[str] :
+                genres = set(genres)
+                for combined_genre in COMBINED_GENRE_FEATURES:
+                    if combined_genre.issubset(genres):
+                        genres.add('_'.join(sorted(combined_genre)))
+                return genres
+            all_ratings_df['genres'] = all_ratings_df['genres'].apply(generate_combined_genres)
+
+
         import datetime
         all_ratings_df['year'] = all_ratings_df['timestamp'].apply(lambda ts: datetime.datetime.fromtimestamp(ts).year)
 
@@ -202,14 +215,13 @@ class MovieLensPipeline:
         average_rating_per_genre_per_user: pd.DataFrame = \
             (all_ratings_df
              .explode('genres').reset_index(drop=True)
-             .groupby(['userId', 'genres']).apply(weighted_average_rating).rename('rating').reset_index())
+             .groupby(['userId', 'genres']))
 
+        if self.enable_weighted_average:
+            average_rating_per_genre_per_user = average_rating_per_genre_per_user.apply(weighted_average_rating).rename('rating').reset_index()
+        else:
+            average_rating_per_genre_per_user = average_rating_per_genre_per_user['rating'].agg('mean').rename('rating').reset_index()
 
-
-        #high_rating_count = average_rating_per_genre_per_user[average_rating_per_genre_per_user['rating'] >= 4.5].groupby('userId').size()
-        #low_rating_count = average_rating_per_genre_per_user[average_rating_per_genre_per_user['rating'] <= 2].groupby('userId').size()
-        #middle_genres_count = average_rating_per_genre_per_user[average_rating_per_genre_per_user['rating'] < 2].groupby('userId').size()
-        #most_watched_movies_year = all_ratings_df.groupby('userId')['year'].quantile(0.9)
 
         users_with_features_df: pd.DataFrame = \
             (average_rating_per_genre_per_user
@@ -218,9 +230,18 @@ class MovieLensPipeline:
              .set_index('userId', drop=False)
              .fillna(0.0))
 
-        #users_with_features_df['high_rating_count'] = users_with_features_df['userId'].map(high_rating_count).fillna(0).astype(int)
-        #users_with_features_df['low_rating_count'] = users_with_features_df['userId'].map(low_rating_count).fillna(0).astype(int)
-        #users_with_features_df['few_genres_lover'] = users_with_features_df['userId'].map(high_rating_count).fillna(0).astype(int)
+        if self.enable_extra_user_features:
+            high_rating_count = average_rating_per_genre_per_user[
+                average_rating_per_genre_per_user['rating'] >= 4.5].groupby('userId').size()
+            low_rating_count = average_rating_per_genre_per_user[
+                average_rating_per_genre_per_user['rating'] <= 2].groupby('userId').size()
+            users_with_features_df['high_rating_count'] = users_with_features_df['userId'].map(
+                high_rating_count).fillna(0).astype(int)
+            users_with_features_df['low_rating_count'] = users_with_features_df['userId'].map(low_rating_count).fillna(
+                0).astype(int)
+            users_with_features_df['few_genres_lover'] = users_with_features_df['userId'].map(high_rating_count).fillna(
+                0).astype(int)
+
 
         logger.info('Preprocessed users, shape = %s, features = %s', users_with_features_df.shape, users_with_features_df.columns.tolist())
         for user_id, row in itertools.islice(users_with_features_df.iterrows(), 10):
@@ -244,11 +265,11 @@ class MovieLensPipeline:
         all_movies_df['genres'] = all_movies_df['genres'].apply(lambda genres: [genre if genre != 'Children' else 'Kids' for genre in genres if genre not in ['(no genres listed)', 'IMAX']])
         all_movies_df: pd.DataFrame = all_movies_df[all_movies_df['genres'].apply(lambda x: len(x) > 0)].copy()
         all_movies_df['genres'] = all_movies_df['genres'].apply(lambda genres: list(sorted(genres)))
-        #all_movies_df['year'] = pd.to_numeric(all_movies_df['title'].str.extract(r'\((\d{4})\)', expand=False)).fillna(0).astype(int)
-        #all_movies_df['specific_target_audience'] = all_movies_df['genres'].apply(lambda x: 1 <= len(x) <= 2).astype(int)
-        #all_movies_df['broad_target_audience'] = all_movies_df['genres'].apply(lambda x: 3 <= len(x) <= 4).astype(int)
-        #all_movies_df['broader_target_audience'] = all_movies_df['genres'].apply(lambda x: len(x) > 4).astype(int)
-        #all_movies_df['average_rating'] = movie_to_ratings_df['mean']
+        all_movies_df['year'] = pd.to_numeric(all_movies_df['title'].str.extract(r'\((\d{4})\)', expand=False)).fillna(0).astype(int)
+        if self.enable_extra_movie_features:
+            all_movies_df['specific_target_audience'] = all_movies_df['genres'].apply(lambda x: 1 <= len(x) <= 2).astype(int)
+            all_movies_df['broad_target_audience'] = all_movies_df['genres'].apply(lambda x: 3 <= len(x) <= 4).astype(int)
+            all_movies_df['broader_target_audience'] = all_movies_df['genres'].apply(lambda x: len(x) > 4).astype(int)
 
         mlb = MultiLabelBinarizer()
         one_hot_genre_matrix = mlb.fit_transform(all_movies_df['genres'])
@@ -278,14 +299,24 @@ class MovieLensPipeline:
 
         logger.info('Preprocessed movies, shape = %s, features = %s', all_movies_df.shape, all_movies_df.columns.tolist())
 
+        # although these feature are not used during training, it is convenient to have them for data interpretation purposes
         all_movies_df['rating_count'] = movie_to_ratings_df['count']
         all_movies_df['rating_avg'] = movie_to_ratings_df['mean']
 
-        all_movies_df['weight'] = 1.0
+
+        if self.enable_weighted_average:
+            def get_weight(avg_rating: int) -> float:
+                if avg_rating < 2.5:
+                    return 0.5
+                elif avg_rating < 3:
+                    return 0.75
+                else:
+                    return 1.0
+
+            all_movies_df['weight'] = 1.0
+            all_movies_df['weight'] = all_movies_df['rating_avg'].apply(get_weight)
 
         shortened_movies_list_df = all_movies_df[all_movies_df['rating_count'] >= 10]
-        #all_movies_df.drop(columns=['rating_count'], inplace=True)
-        #shortened_movies_list_df.drop(columns=['rating_count'], inplace=True)
 
         return all_movies_df, shortened_movies_list_df
 
@@ -341,9 +372,9 @@ class MovieLensPipeline:
 
     def _oversample_ratings(self, all_ratings_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Oversamples the ratings DataFrame to ensure that there are enough ratings for meaningful predictions.
-        The algorithm tries to balance out samples for different buckets of ratings with the emphasis on the worst and the best ratings. 
-        Target – 600k ratings (approximately 60 ratings per 1 movie, although that is not guaranteed by the algorithm).
+        Oversamples the ratings DataFrame to ensure that there are enough ratings for meaningful predictions. The basic version oversamples genres with fewer ratings.
+        Also, if `self.enable_oversampling_by_rating` = True, the algorithm tries to balance out samples for different buckets of ratings with the emphasis on the worst and the best ratings.
+        Approximate target – 600k ratings (approximately 60 ratings per 1 movie, although that is not guaranteed by the algorithm).
         The algorithm is far from ideal. Ideally, we need to look more into various genres and balance based on them as well.
         """
         logger.info('Oversampling ratings... Current shape = %s', all_ratings_df.shape)
@@ -365,38 +396,39 @@ class MovieLensPipeline:
             resampled_ratings_df = pd.concat([resampled_ratings_df, additional_sampled_ratings_df])
 
         logger.info('Completed oversampling ratings by genre... Current ratings shape = %s', resampled_ratings_df.shape)
-        return resampled_ratings_df
 
-        # by rating
-        logger.info('Still oversampling ratings... Current ratings shape = %s', resampled_ratings_df.shape)
+        # The following code oversampling by rating
+        if self.enable_oversampling_by_rating:
 
-        bins = [ 0, 2.5, 4.5, 5 ]
-        labels = [ 1, 2, 3 ]
-        resampled_ratings_df['rating_bin'] = pd.cut(
-            resampled_ratings_df['rating'],
-            bins=bins,
-            labels=labels,
-            right=True
-        )
+            logger.info('Still oversampling ratings... Current ratings shape = %s', resampled_ratings_df.shape)
 
-        grouped_by_rating = resampled_ratings_df.groupby(['rating_bin'])['rating'].count()
+            bins = [ 0, 2.5, 4.5, 5 ]
+            labels = [ 1, 2, 3 ]
+            resampled_ratings_df['rating_bin'] = pd.cut(
+                resampled_ratings_df['rating'],
+                bins=bins,
+                labels=labels,
+                right=True
+            )
 
-        target_per_bin = { 1: grouped_by_rating[1], 2: grouped_by_rating[2], 3: max(grouped_by_rating[3], int(grouped_by_rating[2] * 0.8), grouped_by_rating[1])}
-        for idx, label in enumerate(labels):
-            logger.info('Oversampling bin %.1f-%.1f, current size = %d ratings', bins[idx], bins[idx + 1], grouped_by_rating[label])
-            ratings_to_sample_df = resampled_ratings_df[resampled_ratings_df['rating_bin'] == label]
-            target_sample_amount = target_per_bin[label] - grouped_by_rating[label]
-            if target_sample_amount <= 0:
-                logger.info('Nothing to oversample for bin %.1f-%.1f', bins[idx], bins[idx + 1])
-                continue
-            additional_sampled_ratings_df = sklearn.utils.resample(ratings_to_sample_df, replace=True, n_samples=target_sample_amount, random_state=42)
-            logger.info('Adding new %d ratings for bin %.1f-%.1f', len(additional_sampled_ratings_df), bins[idx], bins[idx + 1])
-            resampled_ratings_df = pd.concat([resampled_ratings_df, additional_sampled_ratings_df])
+            grouped_by_rating = resampled_ratings_df.groupby(['rating_bin'])['rating'].count()
 
-        logger.info('Completed oversampling ratings... New ratings shape = %s', resampled_ratings_df.shape)
+            target_per_bin = { 1: grouped_by_rating[1], 2: grouped_by_rating[2], 3: max(grouped_by_rating[3], int(grouped_by_rating[2] * 0.8), grouped_by_rating[1])}
+            for idx, label in enumerate(labels):
+                logger.info('Oversampling bin %.1f-%.1f, current size = %d ratings', bins[idx], bins[idx + 1], grouped_by_rating[label])
+                ratings_to_sample_df = resampled_ratings_df[resampled_ratings_df['rating_bin'] == label]
+                target_sample_amount = target_per_bin[label] - grouped_by_rating[label]
+                if target_sample_amount <= 0:
+                    logger.info('Nothing to oversample for bin %.1f-%.1f', bins[idx], bins[idx + 1])
+                    continue
+                additional_sampled_ratings_df = sklearn.utils.resample(ratings_to_sample_df, replace=True, n_samples=target_sample_amount, random_state=42)
+                logger.info('Adding new %d ratings for bin %.1f-%.1f', len(additional_sampled_ratings_df), bins[idx], bins[idx + 1])
+                resampled_ratings_df = pd.concat([resampled_ratings_df, additional_sampled_ratings_df])
 
-        resampled_ratings_df.drop(columns=['rating_bin'], inplace=True)
-        resampled_ratings_df.reset_index(drop=True, inplace=True)
+            logger.info('Completed oversampling ratings... New ratings shape = %s', resampled_ratings_df.shape)
+
+            resampled_ratings_df.drop(columns=['rating_bin'], inplace=True)
+            resampled_ratings_df.reset_index(drop=True, inplace=True)
 
         return resampled_ratings_df
 
@@ -422,13 +454,61 @@ class MovieLensPipeline:
                 final_resampled_df = resampled_ratings_with_partitions_df
             else:
                 final_resampled_df = pd.concat([final_resampled_df, resampled_ratings_with_partitions_df], ignore_index=True)
-            #all_ratings_df = pd.concat(
-            #    [all_ratings_df, resampled_ratings_with_partitions_df], ignore_index=True)
-            # print(tabulate(resampled_ratings_with_partitions_df[resampled_ratings_with_partitions_df['userId'] == 600], headers="keys", tablefmt="pretty"))
 
             logger.info('%d synthetic users were added... Current ratings shape = %s', user_to_partition_count_df.sum(), final_resampled_df.shape)
 
         return final_resampled_df
+
+    def load_additional_movie_attributes(self, all_movies_df: pd.DataFrame) -> pd.DataFrame:
+        additional_movie_attributes_file_path = path.join(self.csv_data_path, 'additional_movie_attributes.csv')
+        if os.path.exists(additional_movie_attributes_file_path):
+            dtypes = {
+                'id': pd.Int64Dtype(),
+                'title': pd.StringDtype(),
+                'poster_uri': pd.StringDtype(),
+                'budget': pd.Float64Dtype(),
+                'description': pd.StringDtype(),
+                'release_date': pd.StringDtype(),
+                'origin_countries': pd.StringDtype()
+            }
+            tmdb_attributes_df = pd.read_csv(additional_movie_attributes_file_path, dtype=dtypes, index_col='id')
+        else:
+            all_movies_df: pd.DataFrame = all_movies_df
+            total = all_movies_df.shape[0]
+            processed = 0
+            client = TMDBClient()
+
+
+            def get_tmdb_info(movie_id: int) -> dict[str, str | float | int | datetime.date]:
+                nonlocal processed
+                try:
+                    res = client.get_movie_by_id(movie_id).to_dict()
+                    processed += 1
+                    if processed % 100 == 0:
+                        logger.info('Processed %d out of %d movies', processed, total)
+                    return res
+                except BaseException:
+                    return {}
+
+
+            keys = all_movies_df['tmdbId'].tolist()
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = list(executor.map(get_tmdb_info, keys))
+
+            tmdb_attributes_df = pd.DataFrame(results)
+            tmdb_attributes_df = tmdb_attributes_df[~tmdb_attributes_df['id'].isna()]
+            tmdb_attributes_df.to_csv(additional_movie_attributes_file_path, index=False)
+
+        all_movies_df = (all_movies_df
+                         .reset_index(drop=False)
+                         .drop(columns=['title'])
+                         .merge(tmdb_attributes_df, how='inner', left_on='tmdbId', right_on='id', right_index=True)
+                         .set_index('movieId'))
+
+        return all_movies_df
+
+
 
 
 if __name__ == "__main__":
