@@ -2,6 +2,7 @@ import datetime
 import itertools
 import logging
 import os
+import ast
 import random
 from concurrent.futures import ThreadPoolExecutor
 from os import path
@@ -461,18 +462,8 @@ class MovieLensPipeline:
 
     def load_additional_movie_attributes(self, all_movies_df: pd.DataFrame) -> pd.DataFrame:
         additional_movie_attributes_file_path = path.join(self.csv_data_path, 'additional_movie_attributes.csv')
-        if os.path.exists(additional_movie_attributes_file_path):
-            dtypes = {
-                'id': pd.Int64Dtype(),
-                'title': pd.StringDtype(),
-                'poster_uri': pd.StringDtype(),
-                'budget': pd.Float64Dtype(),
-                'description': pd.StringDtype(),
-                'release_date': pd.StringDtype(),
-                'origin_countries': pd.StringDtype()
-            }
-            tmdb_attributes_df = pd.read_csv(additional_movie_attributes_file_path, dtype=dtypes, index_col='id')
-        else:
+        
+        if not os.path.exists(additional_movie_attributes_file_path):
             all_movies_df: pd.DataFrame = all_movies_df
             total = all_movies_df.shape[0]
             processed = 0
@@ -496,10 +487,22 @@ class MovieLensPipeline:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 results = list(executor.map(get_tmdb_info, keys))
 
-            tmdb_attributes_df = pd.DataFrame(results)
+            tmdb_attributes_df = pd.DataFrame(results, dtype=dtypes)
             tmdb_attributes_df = tmdb_attributes_df[~tmdb_attributes_df['id'].isna()]
             tmdb_attributes_df.to_csv(additional_movie_attributes_file_path, index=False)
-
+            
+        dtypes = {
+            'id': pd.Int64Dtype(),
+            'title': pd.StringDtype(),
+            'poster_uri': pd.StringDtype(),
+            'budget': pd.Float64Dtype(),
+            'description': pd.StringDtype(),
+            'release_date': pd.StringDtype(),
+            'origin_countries': pd.StringDtype()
+        }
+        tmdb_attributes_df = pd.read_csv(additional_movie_attributes_file_path, dtype=dtypes, index_col='id')
+        tmdb_attributes_df["origin_countries"] = tmdb_attributes_df["origin_countries"].apply(ast.literal_eval)
+        
         all_movies_df = (all_movies_df
                          .reset_index(drop=False)
                          .drop(columns=['title'])

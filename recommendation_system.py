@@ -44,7 +44,7 @@ def train(model_save_path: str) -> None:
     model = Model(movie_train_data_df, user_train_data_df, y_df, model_save_path, num_outputs=128)
     model.train()
 
-def recommend(movie_ids: list[int] = None, preferences: dict[str, float] = None) -> list[tuple[str, float]]:
+def recommend(movie_ids: list[int] = None, preferences: dict[str, float] = None) -> list[tuple[int, float]]:
     """
     Recommend items based on the given user preferences.
 
