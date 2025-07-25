@@ -46,7 +46,7 @@ class MovieLensPipeline:
         self.enable_extra_movie_features = enable_extra_movie_features
         self.enable_extra_user_features = enable_extra_user_features
         self.enable_oversampling_by_rating = enable_oversampling_by_rating
-        self.genres_n_clusters = [35, 55]
+        self.genres_n_clusters = [45, 100]
 
 
     def run(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:  # dict[int, dict[str, str | int]]]:
@@ -283,7 +283,7 @@ class MovieLensPipeline:
         # 4 'Crime', 5 'Documentary', 6 'Drama', 7 'Fantasy', 8 'Film-Noir', 9 'Horror',
         # 10 'Kids', 11 'Musical', 12 'Mystery', 13 'Romance', 14 'Sci-Fi', 15 'Thriller', 16 'War',
         # 17 'Western'
-        weights = np.array([1, 1, 2, 1, 4, 3, 1, 1, 1, 4, 4, 1, 1, 1, 1, 1, 3, 2])
+        weights = np.array([1, 1, 2, 1, 4, 3, 1, 1, 1, 4, 4, 1, 1, 1, 1, 1, 4, 3])
         assert x_stacked.shape[1] == weights.shape[0]
 
 
