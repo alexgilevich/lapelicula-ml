@@ -41,7 +41,7 @@ def train(model_save_path: str) -> None:
         raise ValueError("Data is not preprocessed yet")
     
     global model
-    model = Model(movie_train_data_df, user_train_data_df, y_df, model_save_path, num_outputs=128)
+    model = Model(movie_train_data_df, user_train_data_df, y_df, model_save_path, num_outputs=256)
     model.train()
 
 def recommend(movie_ids: list[int] = None, preferences: dict[str, float] = None) -> list[tuple[int, float]]:
@@ -92,7 +92,7 @@ def is_trained() -> bool:
 
 if __name__ == '__main__':
     preprocess('./data/')
-    train('./artifacts/model.keras')
+    train('./artifacts/model_v8.keras')
     
     def recommend_internal(movie_ids: list[int] = None, **preferences: float) -> list[tuple[str, float]]:
         return recommend(movie_ids, preferences)
@@ -125,6 +125,16 @@ if __name__ == '__main__':
 
     print('\n\nsixth user (should be more comedy and romance movies):')
     predictions = recommend_internal(comedy = 4.5,  romance = 4.5 )
+    for pred in predictions:
+        print(pred)
+
+    print('\n\nseventh user (should be more war-related movies):')
+    predictions = recommend_internal(war=5)
+    for pred in predictions:
+        print(pred)
+
+    print('\n\neighth user (should be more western movies):')
+    predictions = recommend_internal(western=5)
     for pred in predictions:
         print(pred)
     
