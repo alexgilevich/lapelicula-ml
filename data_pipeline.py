@@ -496,7 +496,7 @@ class MovieLensPipeline:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 results = list(executor.map(get_tmdb_info, keys))
 
-            tmdb_attributes_df = pd.DataFrame(results, dtype=dtypes)
+            tmdb_attributes_df = pd.DataFrame(results)
             tmdb_attributes_df = tmdb_attributes_df[~tmdb_attributes_df['id'].isna()]
             tmdb_attributes_df.to_csv(additional_movie_attributes_file_path, index=False)
 
