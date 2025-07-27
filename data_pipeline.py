@@ -522,8 +522,8 @@ class MovieLensPipeline:
         return all_movies_df
 
     def _export_top200_movies(self, all_movies_with_links_df: pd.DataFrame):
-        all_movies_with_links_df.sort_values(by='rating_count', ascending=False).iloc[0:200].to_csv(
-            './data/top200_movies.csv')
+        file_path = path.join(self.csv_data_path, 'top200_movies.csv')
+        all_movies_with_links_df.sort_values(by='rating_count', ascending=False).iloc[0:200].to_csv(file_path)
 
 
 
