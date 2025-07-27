@@ -92,7 +92,7 @@ def is_trained() -> bool:
 
 if __name__ == '__main__':
     preprocess('./data/')
-    train('./artifacts/model_v8.keras')
+    train('./artifacts/model_test.keras')
     
     def recommend_internal(movie_ids: list[int] = None, **preferences: float) -> list[tuple[str, float]]:
         return recommend(movie_ids, preferences)
