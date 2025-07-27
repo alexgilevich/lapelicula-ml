@@ -114,9 +114,9 @@ class Model:
             optimizer = keras.optimizers.Adam(learning_rate=0.1), 
             loss = tf.keras.losses.MeanSquaredError())
         
-        model.fit([user_train_df, movie_train_df], y_train_df, epochs=30)
+        model.fit([user_train_df, movie_train_df], y_train_df, epochs=30, verbose=2)
         
-        metrics = model.evaluate([user_test_df, movie_test_df], y_test_df, return_dict=True)
+        metrics = model.evaluate([user_test_df, movie_test_df], y_test_df, return_dict=True, verbose=2)
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
         
         # save the model
@@ -135,7 +135,7 @@ class Model:
         movies_matrix = all_movies_df.reset_index().to_numpy(dtype=int)
     
         # make a prediction
-        y_p = self._tf_model.predict([scaled_user_vec, movies_matrix[:, 1:]])
+        y_p = self._tf_model.predict([scaled_user_vec, movies_matrix[:, 1:]], verbose=0)
     
         # unscale y prediction 
         y_pu = self.target_scaler.inverse_transform (y_p)

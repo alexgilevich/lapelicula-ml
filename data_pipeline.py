@@ -88,7 +88,8 @@ class MovieLensPipeline:
 
         # we need to generate movies dict later on to pass back to C#
         all_movies_df = all_movies_df.join(all_links_df, how="left", lsuffix='_movies', rsuffix='_links')
-        all_movies_df = self.load_additional_movie_attributes(all_movies_df)
+        all_movies_df = self._load_additional_movie_attributes(all_movies_df)
+        self._export_top200_movies(all_movies_df)
         return movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_df, all_ratings_df
 
     def _get_training_data(self, all_movies_df: pd.DataFrame, all_ratings_df: pd.DataFrame, users_with_features_df: pd.DataFrame) \
@@ -460,7 +461,7 @@ class MovieLensPipeline:
 
         return final_resampled_df
 
-    def load_additional_movie_attributes(self, all_movies_df: pd.DataFrame) -> pd.DataFrame:
+    def _load_additional_movie_attributes(self, all_movies_df: pd.DataFrame) -> pd.DataFrame:
         additional_movie_attributes_file_path = path.join(self.csv_data_path, 'additional_movie_attributes.csv')
 
         dtypes = {
@@ -520,6 +521,9 @@ class MovieLensPipeline:
 
         return all_movies_df
 
+    def _export_top200_movies(self, all_movies_with_links_df: pd.DataFrame):
+        all_movies_with_links_df.sort_values(by='rating_count', ascending=False).iloc[0:200].to_csv(
+            './data/top200_movies.csv')
 
 
 
@@ -538,7 +542,6 @@ if __name__ == "__main__":
 
     all_movies_with_links_df['genres'] = all_movies_with_links_df['genres'].apply(lambda genres: ','.join(genres))
     all_movies_with_links_df['origin_countries'] = all_movies_with_links_df['origin_countries'].apply(lambda origin_countries: ','.join(origin_countries))
-    all_movies_with_links_df.sort_values(by='rating_count', ascending=False).iloc[0:200].to_csv('./data/top200_movies.csv')
     all_movies_with_links_df.to_csv('./data/all_movies.csv')
     users_with_features_df.to_csv('./data/user_with_features.csv')
     all_ratings_df.to_csv('./data/ratings_with_movies.csv')
