@@ -482,6 +482,10 @@ class MovieLensPipeline:
 
             def get_tmdb_info(movie_id: int) -> dict[str, str | float | int | datetime.date]:
                 nonlocal processed
+                if movie_id is None:
+                    logger.warning('Error %d while requesting movie #%d', err.response.status_code, movie_id)
+                    return {}
+                    
                 import requests
                 try:
                     res = client.get_movie_by_id(movie_id).to_dict()
