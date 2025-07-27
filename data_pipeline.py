@@ -494,7 +494,10 @@ class MovieLensPipeline:
                         logger.info('Processed %d out of %d movies', processed, total)
                     return res
                 except requests.exceptions.HTTPError as err:
-                    logger.warning('Error %d while requesting movie #%d', err.response.status_code, movie_id)
+                    logger.warning('Error %d while requesting movie #%s', err.response.status_code, movie_id)
+                    return {}
+                except BaseException as err:
+                    logger.error('General error while requesting movie #%s: %s', movie_id, str(err))
                     return {}
 
             keys = all_movies_df['tmdbId'].tolist()
