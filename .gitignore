@@ -212,3 +212,12 @@ __marimo__/
 
 # ML artifacts
 artifacts
+
+
+# ML training data
+data/*
+!data/links.csv
+!data/ratings.csv
+!data/movies.csv
+!data/tags.csv
+!data/README.txt
