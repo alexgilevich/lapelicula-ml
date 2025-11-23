@@ -1,0 +1,40 @@
+# This is a Databricks asset bundle definition for lapelicula.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+bundle:
+  name: lapelicula
+  uuid: 33ec578e-e016-4769-979a-149b8b331efb
+
+include:
+  - resources/*.yml
+
+python:
+  venv_path: .venv
+  # Functions called to load resources defined in Python. See resources/__init__.py
+  resources:
+    - "resources:load_resources"
+
+# Variable declarations. These variables are assigned in the dev/prod targets below.
+variables:
+  catalog:
+    description: The catalog to use
+    default: lapelicula
+  schema:
+    description: The schema to use
+    default: default
+
+    
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-263251e5-68ed.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-263251e5-68ed.cloud.databricks.com
+      root_path: /Workspace/lapelicula/.bundle/${bundle.name}/${bundle.target}
+
+
+

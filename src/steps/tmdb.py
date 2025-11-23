@@ -3,6 +3,7 @@ import requests
 import os
 import json
 from dataclasses import dataclass, asdict
+from config import SecretsManager
 
 
 @dataclass
@@ -21,9 +22,9 @@ class TMDBMovie:
 
 
 class TMDBClient:
-    def __init__(self):
+    def __init__(self, secrets_manager: SecretsManager):
         self.base_url = "https://api.themoviedb.org"
-        self.api_key = os.environ.get("TMDB_API_KEY")
+        self.api_key = secrets_manager.get("TMDB_API_KEY")
 
     def get_movie_by_id(self, id: int) -> TMDBMovie:
         url = f"{self.base_url}/3/movie/{id}?language=en-US"
