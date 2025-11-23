@@ -221,3 +221,10 @@ data/*
 !data/movies.csv
 !data/tags.csv
 !data/README.txt
+
+# Databricks
+.databricks/
+*.egg-info
+.venv/
+scratch/**
+!scratch/README.md
