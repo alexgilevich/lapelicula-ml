@@ -29,7 +29,6 @@ task_files = [
     "step03_generate_synthetic_users",
     "step04_build_user_features",
     "step05_oversample_ratings",
-    "step06_generate_training_data",
     "step07_enrich_movies",
     "step08_export_top200_movies"
 ]
@@ -37,7 +36,7 @@ tasks = [
     Task(
         task_key = source_file_cur,
         depends_on = [TaskDependency(task_key = source_file_prev)] if source_file_prev else [],
-        spark_python_task=SparkPythonTask(python_file = os.path.join("src/steps/", source_file_cur + ".py"), parameters=task_parameters),
+        spark_python_task=SparkPythonTask(python_file = os.path.join("src/preprocessing/", source_file_cur + ".py"), parameters=task_parameters),
         environment_key="Default",
         disable_auto_optimization=True
     )
@@ -49,7 +48,10 @@ preprocessing_job = Job(
     environments = [
         JobEnvironment(
             environment_key="Default",
-            spec=Environment(environment_version="4", dependencies=[line.strip() for line in open("requirements.txt").readlines() if line.strip()]),
+            spec=Environment(
+                environment_version="4", 
+                dependencies=[line.strip() for line in open("resources/requirements_preprocessing.txt").readlines() if line.strip()]
+            ),
         )
     ],
     tasks = tasks,
