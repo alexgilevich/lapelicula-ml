@@ -21,12 +21,6 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 
-class InferenceRequest(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-    
-    user_preferences: dict[str, float]
-    movies: numpy.ndarray
-
 @tf.keras.utils.register_keras_serializable()
 class L2Norm(Layer):
     def __init__(self, axis=1, epsilon=1e-12, **kwargs):
@@ -136,7 +130,7 @@ class Model(mlflow.pyfunc.PythonModel):
         
         assert isinstance(model_input, list)
         
-        return [self._predict_single(request['user_preferences'], request['movies']) for request in model_input]
+        return [self._predict_single(request['user_preferences'], request['movies'], params) for request in model_input]
         
         
     def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[tuple]:

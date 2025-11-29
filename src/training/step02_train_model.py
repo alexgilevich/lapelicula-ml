@@ -1,9 +1,5 @@
-import os
-from typing import Tuple
-from mlflow.pyfunc.stdin_server import params
 import _includes
 import mlflow
-from mlflow import MlflowClient
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from features import UserPreferences
@@ -11,7 +7,7 @@ from spark_utils import get_spark
 from config import Config, ArgumentsConfig
 from job_step import JobStep
 from mlflow_utils import MLFlowModelManager
-from model import Model, InferenceRequest
+from model import Model
 from mlflow.models import infer_signature
 
 MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
@@ -48,13 +44,15 @@ class TrainModelJobStep(JobStep):
 
         catalog_name = self.config.string("UC_DEFAULT_CATALOG_NAME")
         schema_name = self.config.string("UC_DEFAULT_SCHEMA_NAME")
+        num_epochs = self.config.int("NUM_EPOCHS", 2)
+        num_model_layer_outputs = self.config.int("NUM_MODEL_LAYER_OUTPUTS", 256)
         mlflow_model_manager = MLFlowModelManager(catalog_name, schema_name, MLFLOW_MODEL_NAME, "default")
         mlflow_model_manager.start_experiment()
         
         movie_train_data_pdf = self._training_movies_df.orderBy(F.col('row_id')).toPandas()
         user_train_data_pdf = self._training_users_df.orderBy(F.col('row_id')).toPandas()
         y_pdf = self._training_labels_df.orderBy(F.col('row_id')).toPandas()
-        model = Model(num_outputs = 256, num_epochs=30)
+        model = Model(num_outputs = num_model_layer_outputs, num_epochs=num_epochs)
         
         with mlflow.start_run() as run:
             logger.info("User training initial df data shape: %s, columns: %s", movie_train_data_pdf.shape, movie_train_data_pdf.columns)
@@ -100,7 +98,6 @@ class TrainModelJobStep(JobStep):
 
 if __name__ == "__main__":
     from logging_factory import get_logger
-    import training
     logger = get_logger(__name__)
     config = ArgumentsConfig()
     spark = get_spark("step02_train_model", config)
