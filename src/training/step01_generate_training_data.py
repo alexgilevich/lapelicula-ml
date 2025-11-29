@@ -1,18 +1,19 @@
 import os
 from typing import Tuple, List
-
+import _includes
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-
+from spark_utils import get_spark
 from config import Config, ArgumentsConfig
 from job_step import JobStep
+from logging_factory import get_logger
 
+logger = get_logger(__name__)
 
 class GenerateTrainingDataJobStep(JobStep):
     """
-    Step 7: Generate training data
+    Step 1: Generate training data
     - Join oversampled ratings with users_with_features and movies_preprocessed
     - Build per-row movie one-hot genre features (optionally include combined genres)
     - Produce three aligned tables keyed by row_id:
@@ -90,7 +91,7 @@ class GenerateTrainingDataJobStep(JobStep):
 
 if __name__ == "__main__":
     config = ArgumentsConfig()
-    spark = get_spark("step07_generate_training_data", config)
+    spark = get_spark("step01_generate_training_data", config)
     step = GenerateTrainingDataJobStep(spark, config)
     step.load()
     step.process()
