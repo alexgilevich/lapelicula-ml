@@ -1,9 +1,11 @@
 import _includes
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from spark_utils import get_spark
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
 from logging_factory import get_logger
 
@@ -25,8 +27,8 @@ class GenerateTrainingDataJobStep(JobStep):
     - ENABLE_COMBINED_GENRES: 'false' | 'true'
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step07_generate_training_data"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._ratings_oversampled_df: DataFrame | None = None
         self._users_with_features_df: DataFrame | None = None
         self._movies_preprocessed_df: DataFrame | None = None
@@ -80,17 +82,22 @@ class GenerateTrainingDataJobStep(JobStep):
 
     def save(self) -> None:
         assert self._training_movies_df is not None and self._training_users_df is not None and self._training_labels_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._training_movies_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("training_movies")
-        self._training_users_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("training_users")
-        self._training_labels_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("training_labels")
+        self.dataframe_writer.write(self._training_movies_df, "training_movies")
+        self.dataframe_writer.write(self._training_users_df, "training_users")
+        self.dataframe_writer.write(self._training_labels_df, "training_labels")
 
-
-if __name__ == "__main__":
-    config = ArgumentsConfig()
-    spark = get_spark("step01_generate_training_data", config)
-    step = GenerateTrainingDataJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = GenerateTrainingDataJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()

@@ -1,14 +1,15 @@
-import os
-from typing import Tuple
-
+import _includes
+from features import COMBINED_GENRE_FEATURES
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-
-from features import COMBINED_GENRE_FEATURES
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
+
+
 
 
 class BuildUserFeaturesJobStep(JobStep):
@@ -32,8 +33,8 @@ class BuildUserFeaturesJobStep(JobStep):
     - ENABLE_EXTRA_USER_FEATURES: 'false' | 'true'
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step05_build_user_features"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._ratings_df: DataFrame | None = None
         self._users_with_features_df: DataFrame | None = None
         self._movies_df: DataFrame | None = None
@@ -96,15 +97,21 @@ class BuildUserFeaturesJobStep(JobStep):
 
     def save(self) -> None:
         assert self._users_with_features_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._users_with_features_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("users_with_features")
+        self.dataframe_writer.write(self._users_with_features_df, "users_with_features")
 
 
-if __name__ == "__main__":
-    config = ArgumentsConfig()
-    spark = get_spark("step05_build_user_features", config)
-    step = BuildUserFeaturesJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = BuildUserFeaturesJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()

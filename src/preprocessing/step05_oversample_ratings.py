@@ -1,14 +1,14 @@
-import os
-from typing import Tuple, List
-
+import _includes
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
 from logging_factory import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -28,8 +28,8 @@ class OversampleRatingsJobStep(JobStep):
     - RANDOM_SEED: integer (default 42)
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step06_oversample_ratings"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._ratings_df: DataFrame | None = None
         self._ratings_oversampled_df: DataFrame | None = None
         self._movies_df: DataFrame | None = None
@@ -120,15 +120,21 @@ class OversampleRatingsJobStep(JobStep):
     def save(self) -> None:
         assert self._ratings_oversampled_df is not None
         assert self._movies_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._ratings_oversampled_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("ratings_oversampled")
+        self.dataframe_writer.write(self._ratings_oversampled_df, "ratings_oversampled")
 
 
-if __name__ == "__main__":
-    config = ArgumentsConfig()
-    spark = get_spark("step06_oversample_ratings", config)
-    step = OversampleRatingsJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = OversampleRatingsJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()

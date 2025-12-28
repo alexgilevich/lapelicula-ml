@@ -4,6 +4,8 @@ from typing import Any
 
 from pyspark.sql import SparkSession
 
+from catalog_utils import CatalogUtils
+from dataframe import DataFrameWriter
 from spark_utils import get_spark
 from config import Config, ArgumentsConfig
 
@@ -22,13 +24,13 @@ class JobStep:
     and set them in load() / process().
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        # Keep same defaults to ease usage from scripts
-        self.spark: SparkSession = spark or get_spark(self.__class__.__name__)
-        self.config: Config = config or ArgumentsConfig()
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter = None):
+        self.spark: SparkSession = spark
+        self.config: Config = config
+        self.dataframe_writer = dataframe_writer
 
     # The base class provides the methods to be overridden by subclasses.
-    # They intentionally do not accept or return dataframes anymore.
+    # The API intentionally does not accept or return dataframes. It is up to the
     def load(self) -> None:  # pragma: no cover - abstract contract
         raise NotImplementedError
 

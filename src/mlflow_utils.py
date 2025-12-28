@@ -9,6 +9,7 @@ from mlflow.tracking.client import MlflowClient
 import mlflow
 from pyspark.sql import functions as F, DataFrame
 from logging_factory import get_logger
+from config import Config
 
 logger = get_logger(__name__)
 
@@ -19,17 +20,17 @@ class MLFlowModelManager:
     MODEL_URI = "models:/{catalog_name}.{schema_name}.{model_name}@{label}".format
     
     
-    def __init__(self, catalog_name: str, schema_name: str, model_name: str, experiment_name: str):
+    def __init__(self, config: Config):
         self._client: MlflowClient = MlflowClient()
-        self._catalog_name: str = catalog_name
-        self._model_name: str = model_name
-        self._experiment_name: str = experiment_name
-        self._schema_name: str = schema_name
-
+        self._default_model_location: str = config.string("ML_MODEL_LOCATION_PREFIX", "/Workspace/")
+        self._catalog_name: str = config.string("UC_DEFAULT_CATALOG_NAME", "lapelicula")
+        self._schema_name: str = config.string("UC_DEFAULT_SCHEMA_NAME", "default")
+        self._model_name: str = config.string("UC_MODEL_NAME", "lapelicula-recommender-model")
+        self._experiment_name: str = config.string("ML_MODEL_EXPERIMENT_NAME", "default")
 
 
     def get_experiments_path(self) -> str:
-        result = f"/Workspace/{self._catalog_name}/mlflow/experiments/{self._model_name}/{self._experiment_name}"
+        result = os.path.join(self._default_model_location, f"{self._catalog_name}/mlflow/experiments/{self._model_name}/{self._experiment_name}")
         pathlib.Path(result).parent.mkdir(parents=True, exist_ok=True)
         return result
 

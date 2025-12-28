@@ -1,10 +1,12 @@
+import _includes
 import os
-from typing import Tuple
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
 
 
@@ -15,14 +17,14 @@ class ExtractRawDataJobStep(JobStep):
     - Persist as Unity Catalog Delta tables: raw_movies, raw_ratings, raw_links
 
     Config:
-    - UC_CATALOG: Unity Catalog catalog name (default: hive_metastore)
+    -UC_CATALOG: Unity Catalog catalog name (default: hive_metastore)
     - UC_SCHEMA: Unity Catalog schema/database (default: default)
     - RAW_DATA_PATH: Base path to CSV folder (default: ./data)
     - OVERWRITE: If 'true', overwrite existing tables
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step01_extract_raw_data"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._raw_movies_df: DataFrame | None = None
         self._raw_ratings_df: DataFrame | None = None
         self._raw_links_df: DataFrame | None = None
@@ -69,19 +71,23 @@ class ExtractRawDataJobStep(JobStep):
 
     def save(self) -> None:
         assert self._raw_movies_df is not None and self._raw_ratings_df is not None and self._raw_links_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._raw_movies_df.write.format("delta").mode(mode).saveAsTable("raw_movies")
-        self._raw_ratings_df.write.format("delta").mode(mode).saveAsTable("raw_ratings")
-        self._raw_links_df.write.format("delta").mode(mode).saveAsTable("raw_links")
+        self.dataframe_writer.write(self._raw_movies_df, "raw_movies")
+        self.dataframe_writer.write(self._raw_ratings_df, "raw_ratings")
+        self.dataframe_writer.write(self._raw_links_df, "raw_links")
 
 
-if __name__ == "__main__":
-    from logging_factory import get_logger
-    logger = get_logger(__name__)
-    config = ArgumentsConfig()
-    spark = get_spark("step01_extract_raw_data", config)
-    step = ExtractRawDataJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = ExtractRawDataJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()
