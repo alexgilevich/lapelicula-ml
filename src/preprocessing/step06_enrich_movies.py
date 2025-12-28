@@ -2,16 +2,19 @@ import os
 import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, List, Dict, Any
-
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-
-from config import DBUtilsSecretsManager
-from tmdb import TMDBClient
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
+from tmdb import TMDBClient
+from logging_factory import get_logger
+
+logger = get_logger(__name__)
+
 
 
 class EnrichMoviesJobStep(JobStep):
@@ -29,8 +32,8 @@ class EnrichMoviesJobStep(JobStep):
     - TMDB_FETCH_THREADS: default 10
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None, client: TMDBClient = None):
-        super().__init__(spark or get_spark("step08_enrich_movies"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter, client: TMDBClient = None):
+        super().__init__(spark, config, dataframe_writer)
         self._movies_preprocessed_df: DataFrame | None = None
         self._links_df: DataFrame | None = None
         self._movies_enriched_df: DataFrame | None = None
@@ -80,6 +83,7 @@ class EnrichMoviesJobStep(JobStep):
                     res["release_date"] = res["release_date"].isoformat()
                 return res
             except Exception:
+                logger.warning(f"Failed to fetch TMDB info for movie {tmdb_id}")
                 return {}
 
         with ThreadPoolExecutor() as pool:
@@ -91,7 +95,7 @@ class EnrichMoviesJobStep(JobStep):
             T.StructField("id", T.IntegerType(), False),
             T.StructField("title", T.StringType(), True),
             T.StructField("poster_uri", T.StringType(), True),
-            T.StructField("budget", T.DoubleType(), True),
+            T.StructField("budget", T.LongType(), True),
             T.StructField("description", T.StringType(), True),
             T.StructField("release_date", T.StringType(), True),
             T.StructField("origin_countries", T.ArrayType(T.StringType()), True),
@@ -125,7 +129,7 @@ class EnrichMoviesJobStep(JobStep):
         missing_ids_list = [int(r.tmdbId) for r in missing_ids.collect()]
 
         missing_tmdb_info_df = self._fetch_missing_tmdb(missing_ids_list)
-        self._movies_tmdb_info_df = self._movies_tmdb_info_df.unionByName(missing_tmdb_info_df)
+        self._movies_tmdb_info_df = tmdb_attr_df.unionByName(missing_tmdb_info_df)
 
         # Join attributes (drop original title to mimic original behavior)
         movies_no_title = movies_with_links.drop("title") if "title" in movies_with_links.columns else movies_with_links
@@ -134,18 +138,24 @@ class EnrichMoviesJobStep(JobStep):
 
     def save(self) -> None:
         assert self._movies_enriched_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._movies_tmdb_info_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("movies_tmdb_info")
-        self._movies_enriched_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("movies_enriched")
+        assert self._movies_tmdb_info_df is not None
+        self.dataframe_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
+        self.dataframe_writer.write(self._movies_enriched_df, "movies_enriched")
 
 
-if __name__ == "__main__":
-    dbutils: Any
-    config = ArgumentsConfig()
-    client = TMDBClient(DBUtilsSecretsManager("lapelicula", dbutils))
-    spark = get_spark("step08_enrich_movies", config)
-    step = EnrichMoviesJobStep(spark, config, client)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"],
+    tmdb_client: TMDBClient = Provide["tmdb_client"]
+):
+    step = EnrichMoviesJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer, client=tmdb_client)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()
