@@ -1,13 +1,10 @@
-import os
-from typing import Tuple
-
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
-
-from config import Config, ArgumentsConfig
+from config import Config
 from job_step import JobStep
-
 
 class ExportTop200MoviesJobStep(JobStep):
     """
@@ -21,8 +18,8 @@ class ExportTop200MoviesJobStep(JobStep):
     - EXPORT_PATH: optional external path to write CSV (e.g., dbfs:/FileStore/top200_movies.csv)
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step10_export_top200_movies"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._movies_df: DataFrame | None = None
         self._ratings_df: DataFrame | None = None
         self._top200_df: DataFrame | None = None
@@ -52,16 +49,23 @@ class ExportTop200MoviesJobStep(JobStep):
 
 
     def save(self) -> None:
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._top200_df.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("movies_top200")
+        assert self._top200_df is not None
+        self.dataframe_writer.write(self._top200_df, "movies_top200")
 
 
 
-if __name__ == "__main__":
-    config = ArgumentsConfig()
-    spark = get_spark("step10_export_top200_movies", config)
-    step = ExportTop200MoviesJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = ExportTop200MoviesJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()

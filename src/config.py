@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from typing import Optional, Any
 from logging_factory import get_logger
@@ -13,7 +14,6 @@ class Config(ABC):
 
     Implementations should provide methods to fetch string, bool, and int values.
     """
-
     @abstractmethod
     def string(self, name: str, default: str = "") -> str:
         """Return a string configuration value."""
@@ -37,7 +37,6 @@ class ArgumentsConfig(Config):
     """
     CLI arguments config implementation that reads values from job parameters using argparse
     """
-
     def __init__(self) -> None:
         import sys
 
@@ -56,22 +55,28 @@ class ArgumentsConfig(Config):
     def string(self, name: str, default: str = "") -> str:
         return self._config.get(name, default)
 
+class EnvConfig(Config):
+    def string(self, name: str, default: str = "") -> str:
+        return os.environ.get(name, default)
+
 
 class SecretsManager(ABC):
     """
     Abstract secrets manager used by pipeline steps.
     """
-
     @abstractmethod
     def get(self, key: str) -> str:
         """Return a string configuration value."""
         raise NotImplementedError
 
 class DBUtilsSecretsManager(SecretsManager):
-
-    def __init__(self, scope: str, dbutils: Any):
-        self._scope = scope
+    def __init__(self, config: Config, dbutils: Any):
+        self._config = config
         self._dbutils = dbutils
 
     def get(self, key: str) -> str:
-        return self._dbutils.secrets.get(scope = self._scope, key = key)
+        return self._dbutils.secrets.get(scope = self._config.string("SCOPE", "lapelicula"), key = key)
+
+class EnvSecretsManager(SecretsManager):
+    def get(self, key: str) -> str:
+        return os.environ.get(key)

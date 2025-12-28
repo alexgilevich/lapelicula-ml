@@ -1,21 +1,19 @@
-import os
-from typing import Tuple, List
-
+import _includes
+from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
-from spark_utils import get_spark
+from containers import ContainerFactory
+from typing import List
+from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-
-import pandas as pd
+from config import Config
+from job_step import JobStep
+from logging_factory import get_logger
 import numpy as np
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import pairwise_distances
 import kmedoids
-
 from features import ORIGINAL_GENRE_FEATURES
-from config import Config, ArgumentsConfig
-from job_step import JobStep
-from logging_factory import get_logger
 
 logger = get_logger(__name__)
 
@@ -37,8 +35,8 @@ class PreprocessMoviesJobStep(JobStep):
     - GENRES_N_CLUSTERS: comma-separated integers, default '45,100'
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark or get_spark("step02_preprocess_movies"), config or ArgumentsConfig())
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
+        super().__init__(spark, config, dataframe_writer)
         self._raw_movies_df: DataFrame | None = None
         self._raw_ratings_df: DataFrame | None = None
         self._movies_preprocessed_df: DataFrame | None = None
@@ -157,16 +155,23 @@ class PreprocessMoviesJobStep(JobStep):
 
     def save(self) -> None:
         assert self._movies_preprocessed_df is not None and self._movies_shortlist_df is not None
-        overwrite = self.config.bool("OVERWRITE", True)
-        mode = "overwrite" if overwrite else "errorifexists"
-        self._movies_preprocessed_df.write.format("delta").mode(mode).saveAsTable("movies_preprocessed")
-        self._movies_shortlist_df.write.format("delta").mode(mode).saveAsTable("movies_shortlist")
+        self.dataframe_writer.write(self._movies_preprocessed_df, "movies_preprocessed")
+        self.dataframe_writer.write(self._movies_shortlist_df, "movies_shortlist")
 
 
-if __name__ == "__main__":
-    config = ArgumentsConfig()
-    spark = get_spark("step02_preprocess_movies", config)
-    step = PreprocessMoviesJobStep(spark, config)
+
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"]
+):
+    step = PreprocessMoviesJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()

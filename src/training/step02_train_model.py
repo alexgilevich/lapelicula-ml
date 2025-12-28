@@ -1,14 +1,19 @@
 import _includes
 import mlflow
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql import functions as F
 from features import UserPreferences
-from spark_utils import get_spark
-from config import Config, ArgumentsConfig
-from job_step import JobStep
 from mlflow_utils import MLFlowModelManager
 from model import Model
+from dependency_injector.wiring import inject, Provide
+from pyspark.sql import SparkSession, DataFrame
+from containers import ContainerFactory
+from dataframe import DataFrameWriter
+from pyspark.sql import functions as F
+from config import Config
+from job_step import JobStep
+from logging_factory import get_logger
 from mlflow.models import infer_signature
+
+logger = get_logger(__name__)
 
 MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
 
@@ -22,11 +27,12 @@ class TrainModelJobStep(JobStep):
     - OVERWRITE: If 'true', overwrite existing tables
     """
 
-    def __init__(self, spark: SparkSession | None = None, config: Config | None = None):
-        super().__init__(spark, config)
+    def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter, model_manager: MLFlowModelManager):
+        super().__init__(spark, config, dataframe_writer)
         self._training_movies_df: DataFrame | None = None
         self._training_users_df: DataFrame | None = None
         self._training_labels_df: DataFrame | None = None
+        self._model_manager: MLFlowModelManager = model_manager
 
     # ---------------------- step contract ----------------------
     def load(self) -> None:
@@ -46,8 +52,8 @@ class TrainModelJobStep(JobStep):
         schema_name = self.config.string("UC_DEFAULT_SCHEMA_NAME")
         num_epochs = self.config.int("NUM_EPOCHS", 2)
         num_model_layer_outputs = self.config.int("NUM_MODEL_LAYER_OUTPUTS", 256)
-        mlflow_model_manager = MLFlowModelManager(catalog_name, schema_name, MLFLOW_MODEL_NAME, "default")
-        mlflow_model_manager.start_experiment()
+
+        self._model_manager.start_experiment()
         
         movie_train_data_pdf = self._training_movies_df.orderBy(F.col('row_id')).toPandas()
         user_train_data_pdf = self._training_users_df.orderBy(F.col('row_id')).toPandas()
@@ -87,21 +93,28 @@ class TrainModelJobStep(JobStep):
             )
             model_info = mlflow.pyfunc.log_model(MLFLOW_MODEL_NAME, python_model=model, signature=signature, code_paths=["../model.py", "../features.py"])
 
-        model_details = mlflow_model_manager.register_model(model_info)
-        mlflow_model_manager.wait_until_registered(model_details.name, model_details.version)
-        mlflow_model_manager.promote_to_production(model_details.name, model_details.version)
+        model_details = self._model_manager.register_model(model_info)
+        self._model_manager.wait_until_registered(model_details.name, model_details.version)
+        self._model_manager.promote_to_production(model_details.name, model_details.version)
         
     def save(self) -> None:
         pass
         
 
 
-if __name__ == "__main__":
-    from logging_factory import get_logger
-    logger = get_logger(__name__)
-    config = ArgumentsConfig()
-    spark = get_spark("step02_train_model", config)
-    step = TrainModelJobStep(spark, config)
+@inject
+def run(
+    spark_session: SparkSession = Provide["spark_session"],
+    config: Config = Provide["config"],
+    dataframe_writer: DataFrameWriter = Provide["dataframe_writer"],
+    model_manager: MLFlowModelManager = Provide["model_manager"]
+):
+    step = TrainModelJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer, model_manager=model_manager)
     step.load()
     step.process()
     step.save()
+
+if __name__ == "__main__":
+    container = ContainerFactory.create_container()
+    container.wire(modules=[__name__])
+    run()
