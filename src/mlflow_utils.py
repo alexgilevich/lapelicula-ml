@@ -13,24 +13,32 @@ from config import Config
 
 logger = get_logger(__name__)
 
-
 MLFLOW_MODEL_PRODUCTION_ALIAS = "Production"
+DEFAULT_SCHEMA_NAME = "default"
+DEFAULT_CATALOG_NAME = "lapelicula"
+DEFAULT_MLFLOW_TRAINING_ARTIFACTS_LOCATION = "/Workspace/"
+DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
+DEFAULT_MLFLOW_EXPERIMENT_NAME = "default"
+DEFAULT_MLFLOW_REGISTRY_URI = "databricks-uc"
+DEFAULT_MLFLOW_TRACKING_URI = "databricks"
+
 
 class MLFlowModelManager:
     MODEL_URI = "models:/{catalog_name}.{schema_name}.{model_name}@{label}".format
-    
-    
+
     def __init__(self, config: Config):
         self._client: MlflowClient = MlflowClient()
-        self._default_model_location: str = config.string("ML_MODEL_LOCATION_PREFIX", "/Workspace/")
-        self._catalog_name: str = config.string("UC_DEFAULT_CATALOG_NAME", "lapelicula")
-        self._schema_name: str = config.string("UC_DEFAULT_SCHEMA_NAME", "default")
-        self._model_name: str = config.string("UC_MODEL_NAME", "lapelicula-recommender-model")
-        self._experiment_name: str = config.string("ML_MODEL_EXPERIMENT_NAME", "default")
+        self._default_training_artifacts_location: str = config.string("MLFLOW_TRAINING_ARTIFACTS_LOCATION", DEFAULT_MLFLOW_TRAINING_ARTIFACTS_LOCATION)
+        self._catalog_name: str = config.string("UC_DEFAULT_CATALOG_NAME", DEFAULT_CATALOG_NAME)
+        self._schema_name: str = config.string("UC_DEFAULT_SCHEMA_NAME", DEFAULT_SCHEMA_NAME)
+        self._model_name: str = config.string("UC_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
+        self._tracking_uri: str = config.string("MLFLOW_TRACKING_URI", DEFAULT_MLFLOW_MODEL_NAME)
+        self._registry_uri: str = config.string("MLFLOW_REGISTRY_URI", DEFAULT_MLFLOW_MODEL_NAME)
+        self._experiment_name: str = config.string("MLFLOW_MODEL_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT_NAME)
 
 
     def get_experiments_path(self) -> str:
-        result = os.path.join(self._default_model_location, f"{self._catalog_name}/mlflow/experiments/{self._model_name}/{self._experiment_name}")
+        result = os.path.join(self._default_training_artifacts_location, f"experiments/{self._model_name}/{self._experiment_name}")
         pathlib.Path(result).parent.mkdir(parents=True, exist_ok=True)
         return result
 
@@ -42,8 +50,8 @@ class MLFlowModelManager:
     
         logger.info(f"Creating experiment with name {exp_name}")
     
-        mlflow.set_tracking_uri("databricks")
-        mlflow.set_registry_uri("databricks-uc")
+        mlflow.set_tracking_uri(self._tracking_uri)
+        mlflow.set_registry_uri(self._registry_uri)
         
         existing_experiment = mlflow.get_experiment_by_name(exp_name)
         if existing_experiment:
@@ -53,7 +61,6 @@ class MLFlowModelManager:
             _ = mlflow.create_experiment(name=exp_name)
             mlflow_experiment = mlflow.set_experiment(exp_name)
             logger.info(f"Created new experiment: {mlflow_experiment.experiment_id}")
-
 
     
     def load_model_as_pyfunc(self, model_name: str, label: str = MLFLOW_MODEL_PRODUCTION_ALIAS):

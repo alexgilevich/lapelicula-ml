@@ -15,7 +15,9 @@ from mlflow.models import infer_signature
 
 logger = get_logger(__name__)
 
-MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
+DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
+DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 256
+DEFAULT_NUM_EPOCHS = 2
 
 class TrainModelJobStep(JobStep):
     """
@@ -48,10 +50,9 @@ class TrainModelJobStep(JobStep):
         assert self._training_users_df is not None
         assert self._training_labels_df is not None
 
-        catalog_name = self.config.string("UC_DEFAULT_CATALOG_NAME")
-        schema_name = self.config.string("UC_DEFAULT_SCHEMA_NAME")
-        num_epochs = self.config.int("NUM_EPOCHS", 2)
-        num_model_layer_outputs = self.config.int("NUM_MODEL_LAYER_OUTPUTS", 256)
+        model_name = self.config.string("MLFLOW_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
+        num_epochs = self.config.int("NUM_EPOCHS", DEFAULT_NUM_EPOCHS)
+        num_model_layer_outputs = self.config.int("NUM_MODEL_LAYER_OUTPUTS", DEFAULT_NUM_MODEL_LAYER_OUTPUTS)
 
         self._model_manager.start_experiment()
         
@@ -91,11 +92,14 @@ class TrainModelJobStep(JobStep):
                 model_output = model.predict(requests, inference_params),
                 params = inference_params
             )
-            model_info = mlflow.pyfunc.log_model(MLFLOW_MODEL_NAME, python_model=model, signature=signature, code_paths=["../model.py", "../features.py"])
+            model_info = mlflow.pyfunc.log_model(model_name, python_model=model, signature=signature, code_paths=["../model.py", "../features.py"])
 
         model_details = self._model_manager.register_model(model_info)
         self._model_manager.wait_until_registered(model_details.name, model_details.version)
-        self._model_manager.promote_to_production(model_details.name, model_details.version)
+        try:
+            self._model_manager.promote_to_production(model_details.name, model_details.version)
+        except Exception as e:
+            logger.warning("Promotion to production failed (probably because you are using a locally deployed Unity Catalog OSS): %s", e)
         
     def save(self) -> None:
         pass
