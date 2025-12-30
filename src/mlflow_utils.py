@@ -27,40 +27,42 @@ class MLFlowModelManager:
     MODEL_URI = "models:/{catalog_name}.{schema_name}.{model_name}@{label}".format
 
     def __init__(self, config: Config):
-        self._client: MlflowClient = MlflowClient()
         self._default_training_artifacts_location: str = config.string("MLFLOW_TRAINING_ARTIFACTS_LOCATION", DEFAULT_MLFLOW_TRAINING_ARTIFACTS_LOCATION)
         self._catalog_name: str = config.string("UC_DEFAULT_CATALOG_NAME", DEFAULT_CATALOG_NAME)
         self._schema_name: str = config.string("UC_DEFAULT_SCHEMA_NAME", DEFAULT_SCHEMA_NAME)
         self._model_name: str = config.string("UC_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
-        self._tracking_uri: str = config.string("MLFLOW_TRACKING_URI", DEFAULT_MLFLOW_MODEL_NAME)
-        self._registry_uri: str = config.string("MLFLOW_REGISTRY_URI", DEFAULT_MLFLOW_MODEL_NAME)
+        self._tracking_uri: str = config.string("MLFLOW_TRACKING_SERVER_URI", None)
+        self._registry_uri: str = config.string("MLFLOW_REGISTRY_SERVER_URI", None)
+        self._client: MlflowClient = MlflowClient(self._tracking_uri, self._registry_uri)
         self._experiment_name: str = config.string("MLFLOW_MODEL_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT_NAME)
 
 
     def get_experiments_path(self) -> str:
-        result = os.path.join(self._default_training_artifacts_location, f"experiments/{self._model_name}/{self._experiment_name}")
+        result = os.path.join(self._default_training_artifacts_location, f"experiments/{self._experiment_name}")
         pathlib.Path(result).parent.mkdir(parents=True, exist_ok=True)
         return result
-
-    def get_experiments_name(self) -> str:
-        return f"{self._model_name}_{self._experiment_name}"
 
     def start_experiment(self) -> None:
         exp_name = self.get_experiments_path()
     
-        logger.info(f"Creating experiment with name {exp_name}")
-    
-        mlflow.set_tracking_uri(self._tracking_uri)
-        mlflow.set_registry_uri(self._registry_uri)
+        logger.info(f"Starting an MLFlow experiment with name {exp_name}")
+
+        if self._tracking_uri is not None:
+            logger.info(f"Using MLFlow tracking server at {self._tracking_uri}")
+            mlflow.set_tracking_uri(self._tracking_uri)
+
+        if self._registry_uri is not None:
+            logger.info(f"Using MLFlow registry server at {self._registry_uri}")
+            mlflow.set_registry_uri(self._registry_uri)
         
         existing_experiment = mlflow.get_experiment_by_name(exp_name)
         if existing_experiment:
             mlflow_experiment = mlflow.set_experiment(exp_name)
-            logger.info(f"Using existing experiment: {mlflow_experiment.experiment_id}")
+            logger.info(f"Using existing experiment: id={mlflow_experiment.experiment_id}, name={mlflow_experiment.name}, location={mlflow_experiment.artifact_location}, creation_time={mlflow_experiment.creation_time}")
         else:
             _ = mlflow.create_experiment(name=exp_name)
             mlflow_experiment = mlflow.set_experiment(exp_name)
-            logger.info(f"Created new experiment: {mlflow_experiment.experiment_id}")
+            logger.info(f"Created new experiment: id={mlflow_experiment.experiment_id}, name={mlflow_experiment.name}, location={mlflow_experiment.artifact_location}, creation_time={mlflow_experiment.creation_time}")
 
     
     def load_model_as_pyfunc(self, model_name: str, label: str = MLFLOW_MODEL_PRODUCTION_ALIAS):

@@ -15,7 +15,7 @@ class Config(ABC):
     Implementations should provide methods to fetch string, bool, and int values.
     """
     @abstractmethod
-    def string(self, name: str, default: str = "") -> str:
+    def string(self, name: str, default: str | None = "") -> str | None:
         """Return a string configuration value."""
         raise NotImplementedError
 
@@ -52,11 +52,11 @@ class ArgumentsConfig(Config):
         logger.info("The job was initialized with the following configuration: %s", self._config)
 
 
-    def string(self, name: str, default: str = "") -> str:
+    def string(self, name: str, default: str | None = "") -> str | None:
         return self._config.get(name, default)
 
 class EnvConfig(Config):
-    def string(self, name: str, default: str = "") -> str:
+    def string(self, name: str, default: str | None = "") -> str | None:
         return os.environ.get(name, default)
 
 

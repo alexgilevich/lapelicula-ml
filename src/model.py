@@ -117,7 +117,7 @@ class Model(mlflow.pyfunc.PythonModel):
         
         metrics = model.evaluate([user_test_split, movie_test_split], y_test_split, return_dict=True, verbose=2)
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
-        
+
         # save the model
         self._tf_model = model
         
