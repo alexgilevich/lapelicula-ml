@@ -222,6 +222,9 @@ data/*
 !data/tags.csv
 !data/README.txt
 
+# ML artifacts
+model_artifacts/*
+
 # Databricks
 .databricks/
 *.egg-info
