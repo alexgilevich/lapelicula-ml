@@ -37,6 +37,7 @@ class EnrichMoviesJobStep(JobStep):
         self._movies_preprocessed_df: DataFrame | None = None
         self._links_df: DataFrame | None = None
         self._movies_enriched_df: DataFrame | None = None
+        self._movies_onehot_df: DataFrame | None = None
         self._movies_tmdb_info_df: DataFrame | None = None
         self._client = client
 
@@ -109,8 +110,8 @@ class EnrichMoviesJobStep(JobStep):
         assert self._movies_preprocessed_df is not None
         assert self._links_df is not None
 
-        movies_onehot_df = self._one_hot_genres(self._movies_preprocessed_df)
-        movies_with_links = movies_onehot_df.join(self._links_df, on="movieId", how="left")
+        self._movies_onehot_df = self._one_hot_genres(self._movies_preprocessed_df)
+        movies_with_links = self._movies_onehot_df.join(self._links_df, on="movieId", how="left")
 
         # Prepare/cached TMDB attributes table
         tmdb_attr_df = self._movies_tmdb_info_df if self._movies_tmdb_info_df else self.spark.createDataFrame([], schema=T.StructType([
@@ -139,7 +140,8 @@ class EnrichMoviesJobStep(JobStep):
     def save(self) -> None:
         assert self._movies_enriched_df is not None
         assert self._movies_tmdb_info_df is not None
-        self.dataframe_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
+        self.datarame_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
+        self.dataframe_writer.write(self._movies_onehot_df, "movies_onehot") # temporary workaround to facilitate inference testing TODO: move onehot genres to movies_preprocessed
         self.dataframe_writer.write(self._movies_enriched_df, "movies_enriched")
 
 

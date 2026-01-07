@@ -29,8 +29,8 @@ task_files = [
     "step03_generate_synthetic_users",
     "step04_build_user_features",
     "step05_oversample_ratings",
-    "step07_enrich_movies",
-    "step08_export_top200_movies"
+    "step06_enrich_movies",
+    "step07_sync_to_dynamodb"
 ]
 tasks = [
     Task(
