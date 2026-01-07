@@ -73,7 +73,7 @@ class PreprocessMoviesJobStep(JobStep):
 
         # Extract year from title '(YYYY)'
         movies_df = movies_df.withColumn("year_str", F.regexp_extract(F.col("title"), "\\((\\d{4})\\)", 1))
-        movies_df = movies_df.withColumn("year", F.when(F.col("year_str").isNull() | (F.trim(F.col("year_str")) == ""), F.lit(0)).otherwise(F.lit(1)).cast("int")).drop("year_str")
+        movies_df = movies_df.withColumn("year", F.when(F.col("year_str").isNull() | (F.trim(F.col("year_str")) == ""), F.lit(0)).otherwise(F.col("year_str")).cast("int")).drop("year_str")
 
         if enable_extra_movie_features:
             movies_df = (
