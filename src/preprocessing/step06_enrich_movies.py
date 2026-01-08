@@ -140,7 +140,7 @@ class EnrichMoviesJobStep(JobStep):
     def save(self) -> None:
         assert self._movies_enriched_df is not None
         assert self._movies_tmdb_info_df is not None
-        self.datarame_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
+        self.dataframe_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
         self.dataframe_writer.write(self._movies_onehot_df, "movies_onehot") # temporary workaround to facilitate inference testing TODO: move onehot genres to movies_preprocessed
         self.dataframe_writer.write(self._movies_enriched_df, "movies_enriched")
 
