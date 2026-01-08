@@ -1,12 +1,12 @@
-import os.path
+import os
 from pyspark.sql import SparkSession, DataFrame
 from config import Config
 
 
 class DataFrameWriter:
-    def __init__(self, spark_session: SparkSession, config: Config, default_location: str = None):
+    def __init__(self, spark_session: SparkSession, config: Config):
         self.spark_session = spark_session
-        self.default_location = default_location
+        self.default_location = os.path.expanduser(config.string("UC_DEFAULT_TABLE_LOCATION", ".unitycatalog"))
         self.config = config
 
     def write(self, dataframe: DataFrame, table_name: str):
