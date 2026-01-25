@@ -388,6 +388,10 @@ class MovieLensPipeline:
         desired_min_per_genre = int(grouped_by_genre.quantile(0.75))
         genres_with_few_ratings = grouped_by_genre[grouped_by_genre < desired_min_per_genre].index.tolist()
 
+        logger.info('Rating counts by genre = %s', grouped_by_genre)
+        logger.info('Desired min rating per genre = %d', desired_min_per_genre)
+        
+        
         resampled_ratings_df = all_ratings_df
         for genre in genres_with_few_ratings:
             logger.info('Oversampling low-represented genre %s, last known row number = %d ratings', genre, grouped_by_genre[genre])
@@ -529,7 +533,7 @@ class MovieLensPipeline:
 
 if __name__ == "__main__":
     from tabulate import tabulate
-    pipeline = MovieLensPipeline('./data')
+    pipeline = MovieLensPipeline('../data')
     movie_train_data_df, user_train_data_df, y_df, users_with_features_df, all_movies_with_links_df, all_ratings_df = pipeline.run()
 
     print(tabulate(movie_train_data_df.iloc[:100], headers="keys", tablefmt="pretty"))
@@ -542,6 +546,6 @@ if __name__ == "__main__":
 
     all_movies_with_links_df['genres'] = all_movies_with_links_df['genres'].apply(lambda genres: ','.join(genres))
     all_movies_with_links_df['origin_countries'] = all_movies_with_links_df['origin_countries'].apply(lambda origin_countries: ','.join(origin_countries))
-    all_movies_with_links_df.to_csv('./data/all_movies.csv')
-    users_with_features_df.to_csv('./data/user_with_features.csv')
-    all_ratings_df.to_csv('./data/ratings_with_movies.csv')
+    all_movies_with_links_df.to_csv('../data/all_movies.csv')
+    users_with_features_df.to_csv('../data/user_with_features.csv')
+    all_ratings_df.to_csv('../data/ratings_with_movies.csv')

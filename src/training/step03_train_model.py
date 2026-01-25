@@ -1,5 +1,7 @@
 import os
 
+import pandas as pd
+
 import _includes
 import mlflow
 from features import UserPreferences
@@ -15,6 +17,7 @@ from job_step import JobStep
 from logging_factory import get_logger
 from mlflow.models import infer_signature
 import boto3
+import shutil
 
 DEFAULT_MODEL_LOCAL_SAVE_PATH = "../../model_artifacts/mlflow_models/"
 
@@ -90,17 +93,18 @@ class TrainModelJobStep(JobStep):
             mlflow.log_metrics(metrics)
             
             # log model
-            requests = [{
+            model_input_signature = pd.DataFrame([{
                 "user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=0, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
                 "movies": movie_train_data[:10]
-            }]
+            }])
             inference_params = { "limit": 50 }
             signature = infer_signature(
-                model_input = requests, 
-                model_output = model.predict(requests, inference_params),
+                model_input = model_input_signature, 
+                model_output = model.predict(model_input_signature, inference_params),
                 params = inference_params
             )
-            model_log_info = mlflow.pyfunc.log_model(model_name, python_model=model, signature=signature, code_paths=["../model.py", "../features.py"])
+            logger.info("Model signature is: %s", signature)
+            model_log_info = mlflow.pyfunc.log_model(model_name, python_model=model, code_paths=["../model.py", "../features.py"])
             logger.info("Successfully logged the trained model: %s", model_log_info)
 
             model_save_bucket = self.config.string("MODEL_SAVE_S3_BUCKET")
@@ -108,6 +112,8 @@ class TrainModelJobStep(JobStep):
             if model_save_bucket:
                 full_local_model_save_path = os.path.join(local_model_save_path, model_name)
                 try:
+                    if os.path.exists(full_local_model_save_path):
+                        shutil.rmtree(full_local_model_save_path)
                     model_save_info = mlflow.pyfunc.save_model(full_local_model_save_path, python_model=model, signature=signature,
                                                                code_paths=["../model.py", "../features.py"])
                     logger.info("Successfully saved the trained model to the path `%s` with the following details: %s", full_local_model_save_path, model_save_info)

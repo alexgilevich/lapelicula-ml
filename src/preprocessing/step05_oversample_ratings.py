@@ -1,6 +1,7 @@
 import _includes
 from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame
+from pyspark import Row
 from containers import ContainerFactory
 from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
@@ -8,7 +9,7 @@ from pyspark.sql import types as T
 from config import Config
 from job_step import JobStep
 from logging_factory import get_logger
-
+import numpy as np
 
 logger = get_logger(__name__)
 
@@ -41,17 +42,18 @@ class OversampleRatingsJobStep(JobStep):
     def _oversample_by_genre(self, ratings_df: DataFrame, seed: int) -> DataFrame:
         # explode genres
         exploded = ratings_df.withColumn("genre_exploded", F.explode(F.col("genres")))
-        counts = exploded.groupBy("genre_exploded").agg(F.count(F.lit(1)).alias("cnt"))
+        counts = exploded.groupBy("genre_exploded").agg(F.count(F.lit(1)).alias("cnt")).orderBy("genre_exploded")
+        counts_lst: list[Row] = counts.collect()
         # 75th percentile
-        cnt_list = [r.cnt for r in counts.collect()]
+        cnt_list = [r.cnt for r in counts_lst]
         if not cnt_list:
             return ratings_df
-        cnt_list_sorted = sorted(cnt_list)
-        idx = int(0.75 * (len(cnt_list_sorted) - 1))
-        desired_min = cnt_list_sorted[idx]
+        
+        desired_min = int(np.percentile(np.array(cnt_list), 75))
+        logger.info('Desired min rating per genre (75-th percentile) = %d', desired_min)
         # Build union of additional samples
         resampled = ratings_df
-        for row in counts.collect():
+        for row in counts_lst:
             genre = row["genre_exploded"]
             current = row["cnt"]
             if current >= desired_min or current == 0:
@@ -64,6 +66,10 @@ class OversampleRatingsJobStep(JobStep):
             fraction = target / float(current)
             sampled = subset.sample(withReplacement=True, fraction=fraction, seed=seed)
             resampled = resampled.unionByName(sampled)
+
+        resampled = resampled.cache()
+        logger.info('Completed oversampling ratings b y genre... Current ratings count = %d', resampled.count())
+        
         return resampled
 
     def _oversample_by_rating_bins(self, ratings_df: DataFrame, seed: int) -> DataFrame:
