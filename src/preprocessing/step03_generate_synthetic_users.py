@@ -54,9 +54,11 @@ class GenerateSyntheticUsersJobStep(JobStep):
                                              on=F.col("r.movieId") == F.col("m.movieId"), how="inner")
             .drop(self._movies_df["movieId"])  # avoid duplicate movieId columns
         )
-
+        
         genres_n_clusters = self._parse_clusters()
         final_df: DataFrame | None = None
+        
+        logger.info('Generating synthetic users... Current ratings count = %d', ratings_with_movies_df.count())
         for i in range(len(genres_n_clusters)):
             partition_col = f"genre_partition{i}"
             if partition_col not in ratings_with_movies_df.columns:
@@ -79,8 +81,9 @@ class GenerateSyntheticUsersJobStep(JobStep):
                 final_df = sdf
             else:
                 final_df = final_df.unionByName(sdf)
-        self._ratings_df = (final_df if final_df is not None else ratings_with_movies_df.limit(0)).select(*self._ratings_df.columns)
-
+        self._ratings_df = (final_df if final_df is not None else ratings_with_movies_df.limit(0)).select(*self._ratings_df.columns).cache()
+        logger.info('Generated synthetic users... Current ratings count = %d', self._ratings_df.count())
+        
     def save(self) -> None:
         assert self._ratings_df is not None
         self.dataframe_writer.write(self._ratings_df, "ratings_synthetic")

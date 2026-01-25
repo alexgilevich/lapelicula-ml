@@ -75,7 +75,7 @@ class BuildUserFeaturesJobStep(JobStep):
 
         # Explode genres and compute per-user per-genre rating
         exploded = sdf.select("userId", "genres", "rating", *( ["weight"] if "weight" in sdf.columns else [] )) \
-                     .withColumn("genre", F.explode("genres"))
+                     .withColumn("genre", F.explode("genres")).drop("genres")
 
         if enable_weighted and "weight" in exploded.columns:
             avg_rating_by_user_genre_df = exploded.groupBy("userId", "genre").agg((F.sum(F.col("rating") * F.col("weight")) / F.sum(F.col("weight"))).alias("rating"))

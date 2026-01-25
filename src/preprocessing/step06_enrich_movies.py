@@ -37,7 +37,6 @@ class EnrichMoviesJobStep(JobStep):
         self._movies_preprocessed_df: DataFrame | None = None
         self._links_df: DataFrame | None = None
         self._movies_enriched_df: DataFrame | None = None
-        self._movies_onehot_df: DataFrame | None = None
         self._movies_tmdb_info_df: DataFrame | None = None
         self._client = client
 
@@ -54,12 +53,6 @@ class EnrichMoviesJobStep(JobStep):
         if self._table_exists(tmdb_tbl):
             self._movies_tmdb_info_df = self.spark.table(tmdb_tbl)
 
-    def _one_hot_genres(self, movies_df: DataFrame) -> DataFrame:
-        # explode genres and pivot back into one-hot
-        exploded = movies_df.select("movieId", F.explode(F.col("genres")).alias("genre"))
-        onehot_counts = exploded.groupBy("movieId", "genre").count()
-        onehot = onehot_counts.groupBy("movieId").pivot("genre").agg(F.when(F.max("count") > 0, F.lit(1)).otherwise(F.lit(0)).cast(T.IntegerType())).fillna(0)
-        return movies_df.join(onehot, on="movieId", how="left").fillna(0)
 
     def _fetch_missing_tmdb(self, missing_tmdb_ids: List[int]) -> DataFrame:
         if not missing_tmdb_ids:
@@ -110,8 +103,7 @@ class EnrichMoviesJobStep(JobStep):
         assert self._movies_preprocessed_df is not None
         assert self._links_df is not None
 
-        self._movies_onehot_df = self._one_hot_genres(self._movies_preprocessed_df)
-        movies_with_links = self._movies_onehot_df.join(self._links_df, on="movieId", how="left")
+        movies_with_links = self._movies_preprocessed_df.join(self._links_df, on="movieId", how="left")
 
         # Prepare/cached TMDB attributes table
         tmdb_attr_df = self._movies_tmdb_info_df if self._movies_tmdb_info_df else self.spark.createDataFrame([], schema=T.StructType([
@@ -141,7 +133,6 @@ class EnrichMoviesJobStep(JobStep):
         assert self._movies_enriched_df is not None
         assert self._movies_tmdb_info_df is not None
         self.dataframe_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
-        self.dataframe_writer.write(self._movies_onehot_df, "movies_onehot") # temporary workaround to facilitate inference testing TODO: move onehot genres to movies_preprocessed
         self.dataframe_writer.write(self._movies_enriched_df, "movies_enriched")
 
 

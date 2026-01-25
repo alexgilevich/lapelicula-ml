@@ -124,16 +124,20 @@ class Model(mlflow.pyfunc.PythonModel):
         return metrics
 
     # noinspection PyMethodOverriding
-    def predict(self, model_input: list[dict[str, dict[str, float] | numpy.ndarray]], params: dict[str, int|float]) -> list[list[tuple]]:
+    def predict(self, model_input, params):
         if not self.is_trained():
             raise ValueError("Model is not trained. Please train the model first.")
+
+        params: dict[str, int|float] = params or {}
         
-        assert isinstance(model_input, list)
+        logger.debug("Args type = %s ,params type = %s, params = %s", type(model_input), type(params), params)
+        assert isinstance(model_input, pd.DataFrame), "Input is not a Pandas DataFrame"
+        #assert isinstance(model_input, dict), "Params is not a dictionary"
         
-        return [self._predict_single(request['user_preferences'], request['movies'], params) for request in model_input]
+        return [self._predict_single(request['user_preferences'], request['movies'], params) for _, request in model_input.iterrows()]
         
         
-    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[tuple]:
+    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[list]:
         user_preferences = user_preferences or {}
         params = params or {}
         
@@ -143,6 +147,8 @@ class Model(mlflow.pyfunc.PythonModel):
         
         # parameters
         limit = params.get("limit", 50)
+
+        logger.info("Predicting top %d movies for the following preferences: %s", limit, user_preferences)
         
         user_preferences_model = UserPreferences(**user_preferences)
         user_vector = np.array(user_preferences_model.to_list())
@@ -165,7 +171,7 @@ class Model(mlflow.pyfunc.PythonModel):
         sorted_movies_matrix = movies_matrix[sorted_index][:limit]  #using unscaled vectors for display
 
         return [
-            (row[0], np.round(sorted_ypu[i, 0], 1))
+            [row[0], np.round(sorted_ypu[i, 0], 1)]
             for i, row in enumerate(sorted_movies_matrix)
         ]
         
