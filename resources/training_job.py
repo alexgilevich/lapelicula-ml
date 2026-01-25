@@ -25,7 +25,8 @@ parameters = [("RAW_DATA_PATH", RAW_DATA_PATH), ("UC_DEFAULT_CATALOG_NAME", "${v
 task_parameters = [f"--{key}={val}" for key, val in parameters]
 task_files = [
     "step01_generate_training_data",
-    "step02_train_model",
+    "step02_split_training_data",
+    "step03_train_model",
 ]
 tasks = [
     Task(

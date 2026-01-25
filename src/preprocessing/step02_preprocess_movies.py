@@ -14,6 +14,7 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import pairwise_distances
 import kmedoids
 from features import ORIGINAL_GENRE_FEATURES
+import pandas as pd
 
 logger = get_logger(__name__)
 
@@ -93,40 +94,45 @@ class PreprocessMoviesJobStep(JobStep):
 
         # genre partitions via Pandas k-medoids using weighted Jaccard
         # Collect minimal columns to driver
-        pdf = movies_df.select("movieId", "genres").toPandas()
+        pdf = movies_df.select("movieId", "genres").orderBy(F.col("movieId")).toPandas()
         logger.info('Converting to Pandas dataframe to calculate medoids, shape = %s, features = %s', pdf.shape, pdf.columns.tolist())
 
         if not pdf.empty:
             # Binarize using ORIGINAL_GENRE_FEATURES; ensure mapping for 'Kids'
             mlb = MultiLabelBinarizer(classes=ORIGINAL_GENRE_FEATURES)
-            one_hot = mlb.fit_transform(pdf["genres"])
-            x = np.array(one_hot, dtype=bool)
+            onehot_matrix = mlb.fit_transform(pdf["genres"])
+            onehot_bool_matrix = np.array(onehot_matrix, dtype=bool)
             # weights aligned to classes
             # 0 'Action', 1 'Adventure', 2 'Animation', 3 'Comedy',
             # 4 'Crime', 5 'Documentary', 6 'Drama', 7 'Fantasy', 8 'Film-Noir', 9 'Horror',
             # 10 'Kids', 11 'Musical', 12 'Mystery', 13 'Romance', 14 'Sci-Fi', 15 'Thriller', 16 'War',
             # 17 'Western'
+            genre_cols = mlb.classes_.tolist()
             weights = np.array([1, 1, 2, 1, 4, 3, 1, 1, 1, 4, 4, 1, 1, 1, 1, 1, 4, 3])
-            assert x.shape[1] == weights.shape[0]
-
-            d = pairwise_distances(x, metric="jaccard", w=weights)
+            assert onehot_bool_matrix.shape[1] == weights.shape[0]
+            onehot_pdf = pd.DataFrame(onehot_matrix, columns=genre_cols)
+            
+            distances = pairwise_distances(onehot_bool_matrix, metric="jaccard", w=weights)
             # For each n_clusters create labels
             for i, k in enumerate(genres_n_clusters):
                 if len(pdf) >= k and k > 1:
                     km = kmedoids.KMedoids(k, method='fasterpam', random_state=42)
-                    labels = km.fit_predict(d)
+                    labels = km.fit_predict(distances)
                     logger.info('Detected medoids: %s',
                                 [pdf.iloc[idx]['genres'] for idx in km.medoid_indices_])
                 else:
                     labels = np.zeros(len(pdf), dtype=int)
-                pdf[f"genre_partition{i}"] = labels.astype(np.int32)
-
+                pdf[f"genre_partition{i}"] = labels.astype(np.int64)
+                
+            # extend pandas dataframe with onehot encoded genres
+            pdf = pd.concat([pdf, onehot_pdf], axis=1)
         logger.info('Done calculating medoids based on Pandas dataframe, shape = %s, features = %s', pdf.shape, pdf.columns.tolist())
 
         # Convert labels back to Spark and join
         labels_cols = [c for c in pdf.columns if c.startswith("genre_partition")]
         if labels_cols:
-            labels_pdf = pdf[["movieId"] + labels_cols]
+            cols = ["movieId"] + genre_cols + labels_cols
+            labels_pdf = pdf[cols]
             labels_sdf = self.spark.createDataFrame(labels_pdf)
             movies_df = movies_df.join(labels_sdf, on="movieId", how="left")
         else:
