@@ -544,8 +544,12 @@ if __name__ == "__main__":
 
     print('=== Export ===')
 
-    all_movies_with_links_df['genres'] = all_movies_with_links_df['genres'].apply(lambda genres: ','.join(genres))
-    all_movies_with_links_df['origin_countries'] = all_movies_with_links_df['origin_countries'].apply(lambda origin_countries: ','.join(origin_countries))
-    all_movies_with_links_df.to_csv('../data/all_movies.csv')
-    users_with_features_df.to_csv('../data/user_with_features.csv')
-    all_ratings_df.to_csv('../data/ratings_with_movies.csv')
+    # all_movies_with_links_df['genres'] = all_movies_with_links_df['genres'].apply(lambda genres: ','.join(genres))
+    # all_movies_with_links_df['origin_countries'] = all_movies_with_links_df['origin_countries'].apply(lambda origin_countries: ','.join(origin_countries))
+    # all_movies_with_links_df.to_csv('../data/all_movies.csv')
+    # users_with_features_df.to_csv('../data/user_with_features.csv')
+    # all_ratings_df.to_csv('../data/ratings_with_movies.csv')
+    
+    movie_train_data_df.reset_index().to_csv('../data/movie_train_data_new.csv')
+    user_train_data_df.reset_index(drop=True).to_csv('../data/user_train_data_new.csv')
+    y_df.reset_index(drop=True).to_csv('../data/y_labels_new.csv')
