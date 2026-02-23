@@ -18,6 +18,7 @@ from logging_factory import get_logger
 from mlflow.models import infer_signature
 import boto3
 import shutil
+import numpy as np
 
 DEFAULT_MODEL_LOCAL_SAVE_PATH = "../../model_artifacts/mlflow_models/"
 
@@ -53,6 +54,7 @@ class TrainModelJobStep(JobStep):
         self._training_movies_df = self.spark.table("training_movies")
         self._training_users_df = self.spark.table("training_users")
         self._training_labels_df = self.spark.table("training_labels")
+        self._movies_preprocessed_df = self.spark.table("test_catalog.default.movies_preprocessed")
 
     def process(self) -> None:
         assert self._training_movies_df is not None
@@ -91,22 +93,33 @@ class TrainModelJobStep(JobStep):
             })
             
             mlflow.log_metrics(metrics)
-            
+
+
+            all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
             # log model
             model_input_signature = pd.DataFrame([{
-                "user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=0, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-                "movies": movie_train_data[:10]
+                "user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
+                "movies": all_movies_data[:3000]
             }])
-            inference_params = { "limit": 50 }
+            inference_params = { "limit": 1000 }
             signature = infer_signature(
                 model_input = model_input_signature, 
                 model_output = model.predict(model_input_signature, inference_params),
                 params = inference_params
             )
+
+            #temp
+            orig = model.predict(model_input_signature, inference_params)
+            logger.info("orig: %s", orig)
+            
+            
             logger.info("Model signature is: %s", signature)
             model_log_info = mlflow.pyfunc.log_model(model_name, python_model=model, code_paths=["../model.py", "../features.py"])
             logger.info("Successfully logged the trained model: %s", model_log_info)
-
+            
+            
+            
+            
             model_save_bucket = self.config.string("MODEL_SAVE_S3_BUCKET")
             model_save_prefix = self.config.string("MODEL_SAVE_S3_PREFIX")
             if model_save_bucket:
@@ -119,6 +132,10 @@ class TrainModelJobStep(JobStep):
                     logger.info("Successfully saved the trained model to the path `%s` with the following details: %s", full_local_model_save_path, model_save_info)
                 except Exception as e:
                     logger.warning("Failed to save the trained model to the path `%s`", full_local_model_save_path, exc_info=e)
+
+                #temp
+                loaded = mlflow.pyfunc.load_model(full_local_model_save_path).predict(model_input_signature, inference_params)
+                logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
 
                 try:
                     access_key = self._secrets_manager.get("AWS_ACCESS_KEY_ID")
