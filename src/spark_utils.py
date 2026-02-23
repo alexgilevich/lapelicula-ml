@@ -97,7 +97,7 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
         SparkSession.builder
         .appName(app_name)
         .master("spark://127.0.0.1:7077")
-        .config("spark.driver.memory", "2g")
+        .config("spark.driver.memory", "4g")
         .config("spark.driver.cores", "2")
         .config("spark.executor.memory", "4g")
         .config("spark.python.worker.memory", "4g")
