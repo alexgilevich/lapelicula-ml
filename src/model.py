@@ -87,12 +87,13 @@ class RecommenderModel(tf.keras.Model):
         return self.base_model(inputs)
 
 class Model(mlflow.pyfunc.PythonModel):
-    def __init__(self, num_outputs = 32, num_epochs = 30):
+    def __init__(self, num_outputs = 32, num_epochs = 30, model_save_path = "model_binary.keras"):
         self.target_scaler = StandardScaler()
         self.user_scaler = StandardScaler()
         self._tf_model = None
         self.num_outputs = num_outputs
         self.num_epochs = num_epochs
+        self.model_save_path = model_save_path
         
     
     def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, y_labels: numpy.ndarray) -> dict:
@@ -172,7 +173,15 @@ class Model(mlflow.pyfunc.PythonModel):
         )
 
         rec_model.fit([user_train_split, movie_train_split], y_train_split, epochs=self.num_epochs, verbose=2)
-        
+
+        model.compile(
+            optimizer = keras.optimizers.Adam(learning_rate=0.1),
+            loss=tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
+            metrics=[
+                tf.keras.metrics.MeanSquaredError(name="mse"),
+                tf.keras.metrics.MeanAbsoluteError(name="mae")
+            ]
+        )
         metrics = model.evaluate([user_test_split, movie_test_split], y_test_split, return_dict=True, verbose=2)
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
 
@@ -180,7 +189,18 @@ class Model(mlflow.pyfunc.PythonModel):
         self._tf_model = model
         
         return metrics
-
+    
+    def save(self):
+        if not self._tf_model:
+            raise RuntimeError()
+        self._tf_model.save(self.model_save_path, save_format='keras')
+        
+    def load(self):
+        if not os.path.exists(self.model_save_path):
+            raise FileNotFoundError(self.model_save_path)
+        self._tf_model = tf.keras.models.load_model(self.model_save_path, safe_mode=False)
+        
+    
     # noinspection PyMethodOverriding
     def predict(self, model_input, params):
         if not self.is_trained():
