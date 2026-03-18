@@ -58,25 +58,41 @@ class TrainModelJobStep(JobStep):
         
         inference_params = { "limit": 3000 }
         all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
-        model_input_signature = pd.DataFrame([{
-            #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
-            #"user_preferences": UserPreferences(action=5).to_dict(),
-            #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-            #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=5, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-            #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=5, war=0, western=0).to_dict(),
-            #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-            "movies": all_movies_data
-        }])
         
-        loaded = mlflow.pyfunc.load_model(full_local_model_save_path).predict(model_input_signature, inference_params)
-        logger.info("loaded: %s", loaded)
-        recommendations = [(int(movie_id), float(rating)) for movie_id, rating in loaded[0]]
-        recommendations_df = self.spark.createDataFrame(recommendations, schema=StructType([
-            StructField(name="movie_id", dataType=IntegerType(), nullable=True),
-            StructField(name="rating", dataType=StringType(), nullable=True)
-        ]))
-        recommendations_df.join(self._movies_preprocessed_df, 'movie_id', how='inner').withColumn('rn', F.expr('row_number() over(order by rating desc)')).show(1000)
+        model = mlflow.pyfunc.load_model(full_local_model_save_path)
+        examples = [
+            UserPreferences(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5),
+            UserPreferences(kids = 5, animation = 5, adventure = 4.5, comedy = 4.5, mystery = 2, crime = 1, horror = 0.5, sci_fi = 4),
+            UserPreferences( comedy = 4.5, romance = 5, mystery = 2, crime = 0.5, horror = 0.5, sci_fi = 1.5),
+            UserPreferences(kids = 5, animation = 5, adventure = 4.5),
+            UserPreferences(action = 5,  sci_fi = 4.5 ),
+            UserPreferences(comedy = 4.5,  romance = 4.5 ),
+            UserPreferences(war=5),
+            UserPreferences(western=5),
+        ]
         
+        for i, example in enumerate(examples):
+            print(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
+            input = pd.DataFrame([{
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
+                #"user_preferences": UserPreferences(action=5).to_dict(),
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=5, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=5, war=0, western=0).to_dict(),
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
+                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
+                "user_preferences": example.to_dict(),
+                "movies": all_movies_data
+            }])
+            predictions = model.predict(input, inference_params)
+            #logger.info("loaded: %s", predictions)
+            recommendations = [(int(movie_id), float(rating)) for movie_id, rating in predictions[0]]
+            recommendations_df = self.spark.createDataFrame(recommendations, schema=StructType([
+                StructField(name="movie_id", dataType=IntegerType(), nullable=True),
+                StructField(name="rating", dataType=StringType(), nullable=True)
+            ]))
+            recommendations_df.join(self._movies_preprocessed_df, 'movie_id', how='inner').withColumn('rn', F.expr('row_number() over(order by rating desc)')).show(1000,  truncate = False)
+            print("\n\n\n\n")
         #logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
 
     
