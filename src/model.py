@@ -36,6 +36,56 @@ class L2Norm(Layer):
         cfg.update({"axis": self.axis, "epsilon": self.epsilon})
         return cfg
 
+class RecommenderModel(tf.keras.Model):
+    def __init__(self, base_model):
+        super().__init__()
+        self.base_model = base_model
+
+    def train_step(self, data):
+        (user_matrix, movie_matrix), y_ratings = data
+
+        batch_size = tf.shape(movie_matrix)[0]
+
+        # sample negatives by shuffling movies in batch
+        neg_indices = tf.random.shuffle(tf.range(batch_size))
+        neg_movies = tf.gather(movie_matrix, neg_indices)
+
+        with tf.GradientTape() as tape:
+            # positive scores
+            pos_scores = self.base_model([user_matrix, movie_matrix])
+            # negative scores
+            neg_scores = self.base_model([user_matrix, neg_movies])
+            # predicted ratings
+            pred_ratings = tf.sigmoid(pos_scores)
+
+            # MSE loss (real ratings)
+            mse_loss = tf.reduce_mean((y_ratings - pred_ratings) ** 2)
+
+            # ranking loss
+            rank_loss = -tf.reduce_mean(
+                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8)
+            )
+
+            # combined loss
+            loss = mse_loss + 0.2 * rank_loss
+
+        grads = tape.gradient(loss, self.base_model.trainable_variables)
+        
+        self.optimizer.apply_gradients(
+            zip(grads, self.base_model.trainable_variables)
+        )
+
+        # 👇 update metrics manually
+        for metric in self.metrics:
+            metric.update_state(y_ratings, pred_ratings)
+
+        return {
+            **{m.name: m.result() for m in self.metrics}
+        }
+
+    def call(self, inputs):
+        return self.base_model(inputs)
+
 class Model(mlflow.pyfunc.PythonModel):
     def __init__(self, num_outputs = 32, num_epochs = 30):
         self.target_scaler = StandardScaler()
@@ -106,14 +156,22 @@ class Model(mlflow.pyfunc.PythonModel):
         
         # specify the inputs and output of the model
         model = tf.keras.Model([user_input_layer, movie_input_layer], output)
+
+        rec_model = RecommenderModel(model)
         
         model.summary()
-        
-        model.compile(
-            optimizer = keras.optimizers.Adam(learning_rate=0.1), 
-            loss = tf.keras.losses.MeanSquaredError())
-        
-        model.fit([user_train_split, movie_train_split], y_train_split, epochs=self.num_epochs, verbose=2)
+        rec_model.summary()
+
+        rec_model.compile(
+            optimizer = keras.optimizers.Adam(learning_rate=0.1),
+            loss=tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
+            metrics=[
+                tf.keras.metrics.MeanSquaredError(name="mse"),
+                tf.keras.metrics.MeanAbsoluteError(name="mae")
+            ]
+        )
+
+        rec_model.fit([user_train_split, movie_train_split], y_train_split, epochs=self.num_epochs, verbose=2)
         
         metrics = model.evaluate([user_test_split, movie_test_split], y_test_split, return_dict=True, verbose=2)
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
