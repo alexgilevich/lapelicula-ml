@@ -2,7 +2,6 @@ import numpy
 import pandas as pd
 import tensorflow as tf
 from keras import Layer
-from tensorflow import keras
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 import mlflow
@@ -28,15 +27,17 @@ class L2Norm(Layer):
         self.axis = axis
         self.epsilon = epsilon
 
-    def call(self, inputs):
-        return tf.linalg.l2_normalize(inputs, axis=self.axis, epsilon=self.epsilon)
+    def call(self, inputs, name=None):
+        return tf.linalg.l2_normalize(inputs, axis=self.axis, epsilon=self.epsilon, name=name)
 
     def get_config(self):
         cfg = super().get_config()
         cfg.update({"axis": self.axis, "epsilon": self.epsilon})
         return cfg
 
-class RecommenderModel(tf.keras.Model):
+
+
+class CustomTrainingStepModel(tf.keras.Model):
     def __init__(self, base_model):
         super().__init__()
         self.base_model = base_model
@@ -52,14 +53,14 @@ class RecommenderModel(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             # positive scores
-            pos_scores = self.base_model([user_matrix, movie_matrix])
+            pos_scores = self.base_model([user_matrix, movie_matrix])['y_scaled']
             # negative scores
-            neg_scores = self.base_model([user_matrix, neg_movies])
+            neg_scores = self.base_model([user_matrix, neg_movies])['y_scaled']
             # predicted ratings
-            pred_ratings = tf.sigmoid(pos_scores)
+            pred_ratings = pos_scores
 
             # MSE loss (real ratings)
-            mse_loss = tf.reduce_mean((y_ratings - pred_ratings) ** 2)
+            mse_loss = tf.reduce_mean((y_ratings['y_scaled'] - pred_ratings) ** 2)
 
             # ranking loss
             rank_loss = -tf.reduce_mean(
@@ -70,14 +71,14 @@ class RecommenderModel(tf.keras.Model):
             loss = mse_loss + 0.2 * rank_loss
 
         grads = tape.gradient(loss, self.base_model.trainable_variables)
-        
+
         self.optimizer.apply_gradients(
             zip(grads, self.base_model.trainable_variables)
         )
 
         # 👇 update metrics manually
         for metric in self.metrics:
-            metric.update_state(y_ratings, pred_ratings)
+            metric.update_state(y_ratings['y_scaled'], pred_ratings)
 
         return {
             **{m.name: m.result() for m in self.metrics}
@@ -86,10 +87,10 @@ class RecommenderModel(tf.keras.Model):
     def call(self, inputs):
         return self.base_model(inputs)
 
+
+
 class Model(mlflow.pyfunc.PythonModel):
     def __init__(self, num_outputs = 32, num_epochs = 30, model_save_path = "model_binary.keras"):
-        self.target_scaler = StandardScaler()
-        self.user_scaler = StandardScaler()
         self._tf_model = None
         self.num_outputs = num_outputs
         self.num_epochs = num_epochs
@@ -112,26 +113,33 @@ class Model(mlflow.pyfunc.PythonModel):
         logger.info("Movie training data numpy shape: %s, first row: %s", movie_train_data.shape, movie_train_data[0])
         logger.info("Label training data numpy shape: %s, first row: %s", y_labels.shape, y_labels[0])
         
-        user_train_data = user_train_data[:, 1:]
-        movie_train_data = movie_train_data[:, 1:]
         
-        self.user_scaler.fit(user_train_data)
-        user_train_data = self.user_scaler.transform(user_train_data)
-        
-        y_labels = y_labels.reshape(-1, 1)
-        self.target_scaler.fit(y_labels)
-        y_labels = self.target_scaler.transform(y_labels)
+        user_scaler_layer = tf.keras.layers.Normalization(axis=-1)
+        user_scaler_layer.adapt(user_train_data[:, 1:])  # fit scaler
 
+
+        y_labels = y_labels.reshape(-1, 1)
+        y_scaler = tf.keras.layers.Normalization(axis=-1, name="y_scaler_layer")
+        y_scaler.adapt(y_labels)
+
+        # 🔑 Construct the denormalization layer using the adapted normalization one
+        y_unscaler = tf.keras.layers.Normalization(axis=-1, mean=y_scaler.mean, variance=y_scaler.variance, invert=True, name="y_unscaler_layer")
+        
         tf.random.set_seed(42)
         
         movie_train_split, movie_test_split = train_test_split(movie_train_data, train_size=0.9, shuffle=True, random_state=42)
         user_train_split, user_test_split   = train_test_split(user_train_data, train_size=0.9, shuffle=True, random_state=42)
         y_train_split, y_test_split         = train_test_split(y_labels, train_size=0.9, shuffle=True, random_state=42)
 
+        movie_train_split, movie_test_split = movie_train_split[:, 1:], movie_test_split[:, 1:] # skip movie ids
+        user_train_split, user_test_split, user_ids_test_split = user_train_split[:, 1:], user_test_split[:, 1:], user_test_split[:, 0] # skip user ids for training, save user ids separately for evaluation (NDCG calculation) 
+        
+        # skip user ids
+        movie_train_data = movie_train_data[:, 1:] # skip movie ids
 
         # Neural Network architecture
-        tf.random.set_seed(42)
         user_network = tf.keras.models.Sequential([
+            user_scaler_layer,
             tf.keras.layers.Dense(units = 256, activation = 'relu'),
             tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
         ])
@@ -142,53 +150,111 @@ class Model(mlflow.pyfunc.PythonModel):
         ])
         
         # create the user input and point to the base network
-        user_input_layer = tf.keras.layers.Input(shape=(user_train_data.shape[1],), name='user_input_layer')
+        user_input_layer = tf.keras.layers.Input(shape=(user_train_split.shape[1],), name='user_input_layer')
         user_network_output = user_network(user_input_layer)
-        user_network_output = L2Norm(axis=1)(user_network_output)
+        user_network_output = L2Norm(axis=1)(user_network_output, name='user_l2_normalization_layer')
         
         
         # create the item input and point to the base network
-        movie_input_layer = tf.keras.layers.Input(shape=(movie_train_data.shape[1],), name='movie_input_layer')
+        movie_input_layer = tf.keras.layers.Input(shape=(movie_train_split.shape[1],), name='movie_input_layer')
         movie_network_output = movie_network(movie_input_layer)
-        movie_network_output = L2Norm(axis=1)(movie_network_output)
+        movie_network_output = L2Norm(axis=1)(movie_network_output, name='movie_l2_normalization_layer')
         
-        # compute the dot product of the two vectors vu and vm
-        output = tf.keras.layers.Dot(axes=1)([user_network_output, movie_network_output])
+        # compute the dot product of the two vectors: the output user vector and the output movie vector
+        dot_product_output_layer = tf.keras.layers.Dot(axes=1, name="dot_product_layer")([user_network_output, movie_network_output])
+        # Inverse output scaling layer
+        unscaled_output = y_unscaler(dot_product_output_layer)
         
         # specify the inputs and output of the model
-        model = tf.keras.Model([user_input_layer, movie_input_layer], output)
+        model = tf.keras.Model(
+            inputs=[user_input_layer, movie_input_layer], 
+            outputs={
+                "y_scaled": dot_product_output_layer,
+                "y_unscaled": unscaled_output
+            })
 
-        rec_model = RecommenderModel(model)
+        rec_model = CustomTrainingStepModel(model)
         
         model.summary()
         rec_model.summary()
-
-        rec_model.compile(
-            optimizer = keras.optimizers.Adam(learning_rate=0.1),
-            loss=tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
-            metrics=[
+        
+        compile_args = {
+            "optimizer": tf.keras.optimizers.Adam(learning_rate=0.1),
+            "loss": {
+                "y_scaled": tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
+            },
+            "metrics": [
                 tf.keras.metrics.MeanSquaredError(name="mse"),
                 tf.keras.metrics.MeanAbsoluteError(name="mae")
             ]
+        }
+        rec_model.compile(**compile_args)
+        model.compile(**compile_args)
+
+        rec_model.fit(
+            [user_train_split, movie_train_split],
+            {"y_scaled": y_scaler(y_train_split).numpy()}, 
+            epochs=self.num_epochs, 
+            verbose=1
         )
 
-        rec_model.fit([user_train_split, movie_train_split], y_train_split, epochs=self.num_epochs, verbose=2)
+        metrics = self._evaluate_trained_model(model, movie_test_split, user_test_split, user_ids_test_split,
+                                               y_scaler(y_test_split).numpy())
 
-        model.compile(
-            optimizer = keras.optimizers.Adam(learning_rate=0.1),
-            loss=tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
-            metrics=[
-                tf.keras.metrics.MeanSquaredError(name="mse"),
-                tf.keras.metrics.MeanAbsoluteError(name="mae")
-            ]
-        )
-        metrics = model.evaluate([user_test_split, movie_test_split], y_test_split, return_dict=True, verbose=2)
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
 
         # save the model
         self._tf_model = model
         
         return metrics
+
+    def _evaluate_trained_model(self, model, movie_test_split, user_test_split, user_ids_test_split,
+                                y_test_split_scaled):
+        metrics = model.evaluate(
+            [user_test_split, movie_test_split],
+            y_test_split_scaled,
+            return_dict=True,
+            verbose=2
+        )
+        preds = model.predict([user_test_split, movie_test_split])["y_scaled"]
+        ndcg = self._compute_ndcg_offline(
+            y_test_split_scaled.flatten(),
+            preds.flatten(),
+            user_ids_test_split  # you MUST keep these!
+        )
+        metrics["ndcg"] = ndcg
+        return metrics
+
+
+    @staticmethod
+    def _compute_ndcg_offline(y_true, y_pred, user_ids, k=10):
+        # group by user
+        unique_users = np.unique(user_ids)
+        ndcgs = []
+
+        for user_id in unique_users:
+            mask = user_ids == user_id
+            y_t = y_true[mask]
+            y_p = y_pred[mask]
+
+            if len(y_t) < k:
+                continue
+
+            # sort by prediction
+            order = np.argsort(-y_p)
+            y_true_sorted_by_prediction = y_t[order][:k]
+
+            gains = (2 ** y_true_sorted_by_prediction - 1)
+            discounts = np.log2(np.arange(2, k + 2))
+            dcg = np.sum(gains / discounts)
+
+            # ideal
+            y_ideal_sorted = np.sort(y_t)[::-1][:k]
+            ideal_dcg = np.sum((2 ** y_ideal_sorted - 1) / discounts)
+
+            ndcgs.append(dcg / (ideal_dcg + 1e-8))
+
+        return np.mean(ndcgs)
     
     def save(self):
         if not self._tf_model:
@@ -199,7 +265,8 @@ class Model(mlflow.pyfunc.PythonModel):
         if not os.path.exists(self.model_save_path):
             raise FileNotFoundError(self.model_save_path)
         self._tf_model = tf.keras.models.load_model(self.model_save_path, safe_mode=False)
-        
+
+
     
     # noinspection PyMethodOverriding
     def predict(self, model_input, params):
@@ -231,17 +298,14 @@ class Model(mlflow.pyfunc.PythonModel):
         user_preferences_model = UserPreferences(**user_preferences)
         user_vector = np.array(user_preferences_model.to_list())
 
-        # generate and replicate the user vector to match the number movies in the data set.
+        # generate and replicate the user's vector to match the movies' vector shape
         user_matrix = np.tile(user_vector, (movies_matrix.shape[0], 1))
 
-        # scale our user and item vectors
-        scaled_user_vec = self.user_scaler.transform(user_matrix)
-
         # make a prediction
-        y_p = self._tf_model.predict([scaled_user_vec, movies_matrix[:, 1:]], verbose=0)
+        y_p = self._tf_model.predict([user_matrix, movies_matrix[:, 1:]], verbose=0)
 
-        # unscale y prediction 
-        y_p_unscaled = self.target_scaler.inverse_transform(y_p)
+        # take the unscaled y prediction 
+        y_p_unscaled = y_p["y_unscaled"]
 
         # sort the results, highest rating first
         sorted_index = np.argsort(-y_p_unscaled, axis=0).reshape(-1).tolist()  #negate to get largest rating first
@@ -255,6 +319,4 @@ class Model(mlflow.pyfunc.PythonModel):
         
     def is_trained(self) -> bool:
         return self._tf_model is not None
-
-
 
