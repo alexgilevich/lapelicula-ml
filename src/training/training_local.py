@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-movie-recommender-model-18-feb"
 DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 256
-DEFAULT_NUM_EPOCHS = 2
+DEFAULT_NUM_EPOCHS = 30
 
 
 movie_train_data_schema = {"row_id":"int64","movie_id":"int32","title":"object","Action":"int64","Adventure":"int64","Animation":"int64","Comedy":"int64","Crime":"int64","Documentary":"int64","Drama":"int64","Fantasy":"int64","Film-Noir":"int64","Horror":"int64","Kids":"int64","Musical":"int64","Mystery":"int64","Romance":"int64","Sci-Fi":"int64","Thriller":"int64","War":"int64","Western":"int64"}
@@ -38,7 +38,7 @@ y_schema = {"row_id":"int64","rating":"float64"}
 movie_train_data_pdf = pd.read_csv("train_data_movies.csv", dtype=movie_train_data_schema)
 user_train_data_pdf = pd.read_csv("train_data_users.csv", dtype=user_train_data_schema)
 y_pdf = pd.read_csv("train_data_y.csv", dtype=y_schema)
-model_save_path = "model_binary.keras"
+model_save_path = "model_binary_v4.keras"
 
 model = Model(num_outputs = DEFAULT_NUM_MODEL_LAYER_OUTPUTS, num_epochs=DEFAULT_NUM_EPOCHS, model_save_path=model_save_path)
 
