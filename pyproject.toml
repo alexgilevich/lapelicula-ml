@@ -2,7 +2,7 @@
 name = "lapelicula"
 version = "0.0.1"
 authors = [{ name = "Alexandr Gilevich" }]
-requires-python = ">=3.11,<=3.13"
+requires-python = ">=3.11,<=3.15"
 dependencies = [
     "boto3>=1.42.17",
     "databricks-sdk~=0.73.0",
@@ -16,7 +16,7 @@ dependencies = [
     # add dependencies to the 'environment' section of your pipeline.yml file instead
     "mlflow~=3.8.0",
     "mlflow-skinny~=3.8.0",
-    "numpy~=1.26.4",
+    "numpy~=2.1.0",
     "pandas~=2.3.3",
     "pandas-stubs==2.3.2.250926",
     "pydantic~=2.12.4",
@@ -25,7 +25,7 @@ dependencies = [
     "scikit-learn==1.7.0",
     "scipy~=1.16.3",
     "tabulate==0.9.0",
-    "tensorflow==2.16.2",
+    "tensorflow==2.21.0",
 ]
 
 [dependency-groups]
