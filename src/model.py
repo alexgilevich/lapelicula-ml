@@ -10,14 +10,10 @@ import logging
 import numpy as np
 import os
 from features import UserPreferences
+from logging_factory import get_logger
 import pydantic
 
-logger = logging.getLogger(__name__)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger = get_logger(__name__)
 
 
 @tf.keras.utils.register_keras_serializable()
@@ -37,34 +33,68 @@ class L2Norm(Layer):
 
 
 
+
 class CustomTrainingStepModel(tf.keras.Model):
-    def __init__(self, base_model):
+    """
+    This class implements a custom training step to perform global negative sampling for the ranking loss component of the model's loss function. The global negative sampling is performed by sampling negative movies from the entire set of movies, rather than just from the batch, which allows for a more diverse set of negative samples and can lead to better model performance.
+    @param base_model: The base Keras model that takes user and movie inputs and produces a predicted rating.
+    @param all_movies: A numpy array containing all movies information (IDs, features), used for global negative sampling
+    """
+    def __init__(self, base_model: tf.keras.Model, all_movies: np.ndarray):
         super().__init__()
         self.base_model = base_model
+        self.all_movies = all_movies
+        self.loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.mse_tracker = tf.keras.metrics.Mean(name="mse_loss")
+        self.rank_tracker = tf.keras.metrics.Mean(name="rank_loss")
+
 
     def train_step(self, data):
-        (user_matrix, movie_matrix), y_ratings = data
+        # extract what we pass into the fit function
+        (user_matrix, movie_matrix, movie_ids), y_ratings = data
 
         batch_size = tf.shape(movie_matrix)[0]
+        num_movies = tf.shape(self.all_movies)[0]
 
-        # sample negatives by shuffling movies in batch
-        neg_indices = tf.random.shuffle(tf.range(batch_size))
-        neg_movies = tf.gather(movie_matrix, neg_indices)
+        # global negative sampling
+        neg_indices = tf.random.uniform(
+            shape=(batch_size,),
+            minval=0,
+            maxval=num_movies,
+            dtype=tf.int32
+        )
+
+        # avoid sampling the same movie for the same user in the same batch (collision), resample if collision occurs (up to 2 attempts)
+        for _ in range(2):
+            neg_movies = tf.gather(self.all_movies, neg_indices)
+            collision_mask = tf.equal(neg_movies[:, 0], movie_ids)
+
+            resample_indices = tf.random.uniform(
+                shape=(batch_size,),
+                minval=0,
+                maxval=num_movies,
+                dtype=tf.int32
+            )
+
+            neg_indices = tf.where(collision_mask, resample_indices, neg_indices)
+
+        # final negative movies after resampling
+        neg_movies = tf.gather(self.all_movies, neg_indices)[:, 1:] # skip movie ids, keep only features for training
 
         with tf.GradientTape() as tape:
             # positive scores
             pos_scores = self.base_model([user_matrix, movie_matrix])['y_scaled']
             # negative scores
             neg_scores = self.base_model([user_matrix, neg_movies])['y_scaled']
-            # predicted ratings
-            pred_ratings = pos_scores
+
 
             # MSE loss (real ratings)
-            mse_loss = tf.reduce_mean((y_ratings['y_scaled'] - pred_ratings) ** 2)
+            mse_loss = tf.reduce_mean(tf.math.square(y_ratings['y_scaled'] - pos_scores), axis=-1)
 
             # ranking loss
             rank_loss = -tf.reduce_mean(
-                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8)
+                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8),
+                axis=-1
             )
 
             # combined loss
@@ -76,11 +106,21 @@ class CustomTrainingStepModel(tf.keras.Model):
             zip(grads, self.base_model.trainable_variables)
         )
 
+        # update built-in metrics
+        # use batch size as weight to get average loss per sample
+        self.loss_tracker.update_state(loss)
+        self.mse_tracker.update_state(tf.keras.metrics.mse(y_ratings['y_scaled'], pos_scores)) 
+        self.rank_tracker.update_state(rank_loss)
+        
+
         # 👇 update metrics manually
         for metric in self.metrics:
-            metric.update_state(y_ratings['y_scaled'], pred_ratings)
+            metric.update_state(y_ratings['y_scaled'], pos_scores)
 
         return {
+            "loss": self.loss_tracker.result(),
+            "mse_loss": tf.reduce_mean(self.mse_tracker.result()),
+            "rank_loss": self.rank_tracker.result(),
             **{m.name: m.result() for m in self.metrics}
         }
 
@@ -97,12 +137,13 @@ class Model(mlflow.pyfunc.PythonModel):
         self.model_save_path = model_save_path
         
     
-    def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, y_labels: numpy.ndarray) -> dict:
+    def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, y_labels: numpy.ndarray, all_movies: numpy.ndarray) -> dict:
         """
         Trains the model using the provided training data
         :param user_train_data: User training data
         :param movie_train_data: Movie training data
         :param y_labels: Y-labels (ground truth)
+        :param all_movies: Array containing all movies information (used for negative sampling)
         :return: Train metrics
         """
         
@@ -126,13 +167,26 @@ class Model(mlflow.pyfunc.PythonModel):
         y_unscaler = tf.keras.layers.Normalization(axis=-1, mean=y_scaler.mean, variance=y_scaler.variance, invert=True, name="y_unscaler_layer")
         
         tf.random.set_seed(42)
-        
-        movie_train_split, movie_test_split = train_test_split(movie_train_data, train_size=0.9, shuffle=True, random_state=42)
-        user_train_split, user_test_split   = train_test_split(user_train_data, train_size=0.9, shuffle=True, random_state=42)
-        y_train_split, y_test_split         = train_test_split(y_labels, train_size=0.9, shuffle=True, random_state=42)
+        (
+            movie_train_split,
+            movie_test_split,
+            user_train_split,
+            user_test_split,
+            y_train_split,
+            y_test_split
+        ) = train_test_split(
+            movie_train_data,
+            user_train_data,
+            y_labels,
+            train_size=0.9,
+            shuffle=True,
+            random_state=42
+        )
 
-        movie_train_split, movie_test_split = movie_train_split[:, 1:], movie_test_split[:, 1:] # skip movie ids
-        user_train_split, user_test_split, user_ids_test_split = user_train_split[:, 1:], user_test_split[:, 1:], user_test_split[:, 0] # skip user ids for training, save user ids separately for evaluation (NDCG calculation) 
+        # skip movie ids, save movie ids separately for training (negative sampling)
+        movie_train_split, movie_ids_train_split, movie_test_split = movie_train_split[:, 1:], movie_train_split[:, 0], movie_test_split[:, 1:] 
+        # skip user ids for training, save user ids separately for evaluation (NDCG calculation) 
+        user_train_split, user_test_split, user_ids_test_split = user_train_split[:, 1:], user_test_split[:, 1:], user_test_split[:, 0] 
         
         # skip user ids
         movie_train_data = movie_train_data[:, 1:] # skip movie ids
@@ -173,7 +227,7 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_unscaled": unscaled_output
             })
 
-        rec_model = CustomTrainingStepModel(model)
+        rec_model = CustomTrainingStepModel(model, all_movies)
         
         model.summary()
         rec_model.summary()
@@ -184,22 +238,21 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_scaled": tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
             },
             "metrics": [
-                tf.keras.metrics.MeanSquaredError(name="mse"),
-                tf.keras.metrics.MeanAbsoluteError(name="mae")
+                tf.keras.metrics.MeanSquaredError(name="tf_mse"),
+                tf.keras.metrics.MeanAbsoluteError(name="tf_mae")
             ]
         }
         rec_model.compile(**compile_args)
-        model.compile(**compile_args)
+        model.compile(**compile_args) # compile the base model as well, just for evaluation purposes (we won't use its train_step)
 
         rec_model.fit(
-            [user_train_split, movie_train_split],
+            [user_train_split, movie_train_split, movie_ids_train_split],
             {"y_scaled": y_scaler(y_train_split).numpy()}, 
             epochs=self.num_epochs, 
             verbose=1
         )
 
-        metrics = self._evaluate_trained_model(model, movie_test_split, user_test_split, user_ids_test_split,
-                                               y_scaler(y_test_split).numpy())
+        metrics = self._evaluate_trained_model(model, movie_test_split, user_test_split, user_ids_test_split, y_test_split) 
 
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
 
@@ -208,17 +261,26 @@ class Model(mlflow.pyfunc.PythonModel):
         
         return metrics
 
-    def _evaluate_trained_model(self, model, movie_test_split, user_test_split, user_ids_test_split,
-                                y_test_split_scaled):
+    def _evaluate_trained_model(self, model, movie_test_split, user_test_split, user_ids_test_split, y_test_split):
+        """
+        Evaluate the trained model using MSE, MAE and NDCG metrics. The NDCG is computed offline by generating predictions for the test set and comparing them to the true ratings, grouped by user.
+        :param model: The trained Keras model to evaluate
+        :param movie_test_split: Movie features for the test set
+        :param user_test_split: User features for the test set
+        :param user_ids_test_split: User IDs for the test set (used for NDCG calculation)
+        :param y_test_split: True ratings for the test set (unscaled!)
+        :return: A dictionary containing the computed metrics (MSE, MAE, NDCG) for the test set
+        """
+
         metrics = model.evaluate(
             [user_test_split, movie_test_split],
-            y_test_split_scaled,
+            y_test_split,
             return_dict=True,
             verbose=2
         )
         preds = model.predict([user_test_split, movie_test_split])["y_scaled"]
         ndcg = self._compute_ndcg_offline(
-            y_test_split_scaled.flatten(),
+            y_test_split,
             preds.flatten(),
             user_ids_test_split  # you MUST keep these!
         )
@@ -228,6 +290,8 @@ class Model(mlflow.pyfunc.PythonModel):
 
     @staticmethod
     def _compute_ndcg_offline(y_true, y_pred, user_ids, k=10):
+        """Compute NDCG@k offline by generating predictions for the test set and comparing them to the true ratings, grouped by user. This function assumes that the input y_true, y_pred and user_ids are aligned (i.e. the i-th element of each corresponds to the same user-movie pair) and that user_ids contains the user identifiers for each prediction, which are necessary for grouping the predictions by user."""
+
         # group by user
         unique_users = np.unique(user_ids)
         ndcgs = []
@@ -237,8 +301,8 @@ class Model(mlflow.pyfunc.PythonModel):
             y_t = y_true[mask]
             y_p = y_pred[mask]
 
-            if len(y_t) < k:
-                continue
+            # if there are less than k movies for this user still caculate the metric but adjust k to the number of ratings for this user
+            k = min(k, len(y_t))
 
             # sort by prediction
             order = np.argsort(-y_p)

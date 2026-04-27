@@ -48,7 +48,7 @@ examples = [
 ]
 
 
-model_save_path = "model_binary_v4.keras"
+model_save_path = "model_binary_v6.keras"
 
 model = Model(num_outputs = DEFAULT_NUM_MODEL_LAYER_OUTPUTS, num_epochs=DEFAULT_NUM_EPOCHS, model_save_path=model_save_path)
 
@@ -57,7 +57,7 @@ model.load()
 all_movies_pdf = all_movies_pdf.set_index('movie_id')[['title', 'genres', 'year', 'rating_count', 'rating_avg']]
 
 for i, example in enumerate(examples):
-    print(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
+    logger.info(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
     input = pd.DataFrame([{
         #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
         #"user_preferences": UserPreferences(action=5).to_dict(),
