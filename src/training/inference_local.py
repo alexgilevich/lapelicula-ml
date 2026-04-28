@@ -48,7 +48,7 @@ examples = [
 ]
 
 
-model_save_path = "model_binary_v6.keras"
+model_save_path = "model_binary_v10.keras"
 
 model = Model(num_outputs = DEFAULT_NUM_MODEL_LAYER_OUTPUTS, num_epochs=DEFAULT_NUM_EPOCHS, model_save_path=model_save_path)
 

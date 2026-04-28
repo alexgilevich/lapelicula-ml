@@ -40,18 +40,19 @@ class CustomTrainingStepModel(tf.keras.Model):
     @param base_model: The base Keras model that takes user and movie inputs and produces a predicted rating.
     @param all_movies: A numpy array containing all movies information (IDs, features), used for global negative sampling
     """
-    def __init__(self, base_model: tf.keras.Model, all_movies: np.ndarray):
+    def __init__(self, base_model: tf.keras.Model, all_movies: np.ndarray, output_names: list[str]):
         super().__init__()
         self.base_model = base_model
         self.all_movies = all_movies
-        self.loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.mse_tracker = tf.keras.metrics.Mean(name="mse_loss")
         self.rank_tracker = tf.keras.metrics.Mean(name="rank_loss")
+        self.output_names = output_names
 
 
     def train_step(self, data):
         # extract what we pass into the fit function
-        (user_matrix, movie_matrix, movie_ids), y_ratings = data
+        (user_matrix, movie_matrix, movie_ids), y_true = data
 
         batch_size = tf.shape(movie_matrix)[0]
         num_movies = tf.shape(self.all_movies)[0]
@@ -87,45 +88,56 @@ class CustomTrainingStepModel(tf.keras.Model):
             # negative scores
             neg_scores = self.base_model([user_matrix, neg_movies])['y_scaled']
 
-
             # MSE loss (real ratings)
-            mse_loss = tf.reduce_mean(tf.math.square(y_ratings['y_scaled'] - pos_scores), axis=-1)
+            mse_loss = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - pos_scores), axis=-1)
 
             # ranking loss
             rank_loss = -tf.reduce_mean(
-                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8),
+                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8), 
                 axis=-1
             )
 
             # combined loss
-            loss = mse_loss + 0.2 * rank_loss
-
-        grads = tape.gradient(loss, self.base_model.trainable_variables)
+            total_loss = mse_loss + 0.2 * rank_loss
+            
+        grads = tape.gradient(total_loss, self.base_model.trainable_variables)
 
         self.optimizer.apply_gradients(
             zip(grads, self.base_model.trainable_variables)
         )
 
-        # update built-in metrics
-        # use batch size as weight to get average loss per sample
-        self.loss_tracker.update_state(loss)
-        self.mse_tracker.update_state(tf.keras.metrics.mse(y_ratings['y_scaled'], pos_scores)) 
-        self.rank_tracker.update_state(rank_loss)
+        return self.compute_metrics((user_matrix, movie_matrix, movie_ids), y_true['y_scaled'], pos_scores, mse_loss, rank_loss, total_loss)
         
-
-        # 👇 update metrics manually
-        for metric in self.metrics:
-            metric.update_state(y_ratings['y_scaled'], pos_scores)
-
-        return {
-            "loss": self.loss_tracker.result(),
-            "mse_loss": tf.reduce_mean(self.mse_tracker.result()),
-            "rank_loss": self.rank_tracker.result(),
-            **{m.name: m.result() for m in self.metrics}
-        }
 
     def call(self, inputs):
         return self.base_model(inputs)
+    
+    def compute_metrics(self, x, y, y_pred, mse_loss, rank_loss, total_loss):
+        metric_results = super().compute_metrics(x, y, y_pred)
+        
+        # update built-in metrics
+        self.total_loss_tracker.update_state(total_loss)
+        self.mse_tracker.update_state(mse_loss)
+        self.rank_tracker.update_state(rank_loss)
+        
+        # compute and return a dictionary of metrics
+        return {
+            **metric_results - { "loss": 0 },  # remove the default loss metric since we compute our own combined loss
+            self.total_loss_tracker.name: self.total_loss_tracker.result(),
+            self.mse_tracker.name: self.mse_tracker.result(),
+            self.rank_tracker.name: self.rank_tracker.result()
+        }
+    
+    @property
+    def metrics(self):
+        # We list our `Metric` objects here so that `reset_states()` can be
+        # called automatically at the start of each epoch
+        # or at the start of `evaluate()`.
+        # If you don't implement this property, you have to call
+        # `reset_states()` yourself at the time of your choosing.
+        result = [self.total_loss_tracker, self.mse_tracker, self.rank_tracker]
+        result.extend(super().metrics)
+        return result
 
 
 
@@ -216,6 +228,7 @@ class Model(mlflow.pyfunc.PythonModel):
         
         # compute the dot product of the two vectors: the output user vector and the output movie vector
         dot_product_output_layer = tf.keras.layers.Dot(axes=1, name="dot_product_layer")([user_network_output, movie_network_output])
+
         # Inverse output scaling layer
         unscaled_output = y_unscaler(dot_product_output_layer)
         
@@ -227,7 +240,7 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_unscaled": unscaled_output
             })
 
-        rec_model = CustomTrainingStepModel(model, all_movies)
+        rec_model = CustomTrainingStepModel(model, all_movies, ['y_scaled', 'y_unscaled'])
         
         model.summary()
         rec_model.summary()
@@ -237,10 +250,11 @@ class Model(mlflow.pyfunc.PythonModel):
             "loss": {
                 "y_scaled": tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
             },
-            "metrics": [
-                tf.keras.metrics.MeanSquaredError(name="tf_mse"),
-                tf.keras.metrics.MeanAbsoluteError(name="tf_mae")
-            ]
+            "metrics": {
+                "y_scaled": [tf.keras.metrics.MeanSquaredError(name="tf_mse")],
+                "y_unscaled": []
+            },
+            #"run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
         }
         rec_model.compile(**compile_args)
         model.compile(**compile_args) # compile the base model as well, just for evaluation purposes (we won't use its train_step)
@@ -249,7 +263,8 @@ class Model(mlflow.pyfunc.PythonModel):
             [user_train_split, movie_train_split, movie_ids_train_split],
             {"y_scaled": y_scaler(y_train_split).numpy()}, 
             epochs=self.num_epochs, 
-            verbose=1
+            verbose=1,
+            batch_size = 2048
         )
 
         metrics = self._evaluate_trained_model(model, movie_test_split, user_test_split, user_ids_test_split, y_test_split) 

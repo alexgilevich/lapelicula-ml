@@ -43,7 +43,7 @@ movie_train_data_pdf = pd.read_csv("train_data_movies.csv", dtype=movie_train_da
 user_train_data_pdf = pd.read_csv("train_data_users.csv", dtype=user_train_data_schema)
 y_pdf = pd.read_csv("train_data_y.csv", dtype=y_schema)
 
-model_save_path = "model_binary_v7.keras"
+model_save_path = "model_binary_v10.keras"
 model = Model(num_outputs = DEFAULT_NUM_MODEL_LAYER_OUTPUTS, num_epochs=DEFAULT_NUM_EPOCHS, model_save_path=model_save_path)
 
 
