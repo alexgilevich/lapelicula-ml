@@ -6,7 +6,7 @@ from config import Config
 class DataFrameWriter:
     def __init__(self, spark_session: SparkSession, config: Config):
         self.spark_session = spark_session
-        self.default_location = os.path.expanduser(config.string("UC_DEFAULT_TABLE_LOCATION", ".unitycatalog"))
+        self.default_location = os.path.expanduser(config.string("UC_DEFAULT_TABLE_LOCATION"))
         self.config = config
 
     def write(self, dataframe: DataFrame, table_name: str):
@@ -15,7 +15,11 @@ class DataFrameWriter:
             # we need to first write the data to the external table location
             dataframe.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(os.path.join(self.default_location, table_name))
             # and then create a table in Unity Catalog
-            self.spark_session.sql(f"CREATE OR REPLACE TABLE {table_name} USING DELTA LOCATION '{os.path.join(self.default_location, table_name)}'")
+            self.spark_session.sql(f"""
+                CREATE OR REPLACE TABLE {table_name} 
+                USING DELTA 
+                LOCATION '{os.path.join(self.default_location, table_name)}'
+                """)
         else:
             overwrite = self.config.bool("OVERWRITE", True)
             mode = "overwrite" if overwrite else "errorifexists"
