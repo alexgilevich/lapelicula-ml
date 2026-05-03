@@ -1,3 +1,4 @@
+import _includes
 import os
 import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -53,7 +54,8 @@ class EnrichMoviesJobStep(JobStep):
         if self._table_exists(tmdb_tbl):
             self._movies_tmdb_info_df = self.spark.table(tmdb_tbl)
 
-
+    ### Helper to fetch missing TMDB info in parallel
+    ### This is done with a thread pool and not with Spark for now
     def _fetch_missing_tmdb(self, missing_tmdb_ids: List[int]) -> DataFrame:
         if not missing_tmdb_ids:
             return self.spark.createDataFrame([], schema=T.StructType([
@@ -76,8 +78,8 @@ class EnrichMoviesJobStep(JobStep):
                 if isinstance(res.get("release_date"), datetime.date):
                     res["release_date"] = res["release_date"].isoformat()
                 return res
-            except Exception:
-                logger.warning(f"Failed to fetch TMDB info for movie {tmdb_id}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch TMDB info for movie {tmdb_id}: {e}")
                 return {}
 
         with ThreadPoolExecutor() as pool:
