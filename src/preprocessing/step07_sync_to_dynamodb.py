@@ -1,5 +1,6 @@
+import _includes
+import boto3
 from typing import Iterable
-
 from boto3.resources.base import ServiceResource
 from dependency_injector.wiring import inject, Provide
 from pyspark.sql import SparkSession, DataFrame, Row
@@ -8,13 +9,14 @@ from dataframe import DataFrameWriter
 from pyspark.sql import functions as F, types as T
 from config import Config, SecretsManager
 from job_step import JobStep
-import boto3
-from boto3.dynamodb.table import BatchWriter
-import boto3.dynamodb.types as ddbtypes
 from logging_factory import get_logger
 from decimal import Decimal
 
 logger = get_logger(__name__)
+
+
+TARGET_TABLE = "movies"
+
 
 class SyncDataToDynamoDbJobStep(JobStep):
     """
@@ -59,70 +61,78 @@ class SyncDataToDynamoDbJobStep(JobStep):
             F.col("release_date").cast(T.StringType()).alias("release_date"),
             F.col("origin_countries").alias("origin_countries"),
         ).dropDuplicates(["movie_id"])
-
-
-
-
+    
 
     def save(self) -> None:
         assert self._movies_df is not None
 
-        # although boto3 does not require passing the credentials explicitly if they are set using environment variables,
-        # it is still required to do so in the Databricks cluster where credentials should retrieved first from the secrets
+        self.create_table()
+        
+        
+        self._movies_df.foreachPartition(self.create_partition_processor())
 
-        secrets_manager = self._secrets_manager
-        access_key = secrets_manager.get("AWS_ACCESS_KEY_ID")
-        secret_key = secrets_manager.get("AWS_SECRET_ACCESS_KEY")
-        region = secrets_manager.get("AWS_DEFAULT_REGION")
+    def create_table(self) -> None:
+        access_key = self._secrets_manager.get("AWS_ACCESS_KEY_ID")
+        secret_key = self._secrets_manager.get("AWS_SECRET_ACCESS_KEY")
+        region = self._secrets_manager.get("AWS_DEFAULT_REGION")
 
-        def get_dynamodb_resource() -> ServiceResource:
-            return boto3.resource('dynamodb',
-                                  aws_access_key_id=access_key,
-                                  aws_secret_access_key=secret_key,
-                                  region_name=region)
+        dynamodb = boto3.resource('dynamodb',
+                                    aws_access_key_id=access_key,
+                                    aws_secret_access_key=secret_key,
+                                    region_name=region)
+
+        existing_tables = dynamodb.meta.client.list_tables()['TableNames']
+        if TARGET_TABLE not in existing_tables:
+            logger.info("Creating table %s", TARGET_TABLE)
+            table = dynamodb.create_table(
+                TableName=TARGET_TABLE,
+                KeySchema=[{'AttributeName': 'movie_id', 'KeyType': 'HASH'}],
+                AttributeDefinitions=[
+                    {'AttributeName': 'movie_id', 'AttributeType': boto3.dynamodb.types.NUMBER}
+                ],
+                BillingMode='PAY_PER_REQUEST'
+            )
+
+            logger.info("Waiting for table %s to be created", TARGET_TABLE)
+            table.meta.client.get_waiter('table_exists').wait(TableName=TARGET_TABLE)
+
+    def create_partition_processor(self) -> callable:
+        # create DynamoDB resource inside the worker to avoid serialization issues
+        access_key = self._secrets_manager.get("AWS_ACCESS_KEY_ID")
+        secret_key = self._secrets_manager.get("AWS_SECRET_ACCESS_KEY")
+        region = self._secrets_manager.get("AWS_DEFAULT_REGION")
+        table_name = TARGET_TABLE
+
+        def _process(partition: Iterable[Row]):
+            dynamodb_resource = boto3.resource('dynamodb',
+                                                aws_access_key_id=access_key,
+                                                aws_secret_access_key=secret_key,
+                                                region_name=region)
 
 
-        def create_table(table_name: str):
-            dynamodb = get_dynamodb_resource()
-
-            existing_tables = dynamodb.meta.client.list_tables()['TableNames']
-            if table_name not in existing_tables:
-                logger.info("Creating table %s", table_name)
-                table = dynamodb.create_table(
-                    TableName=table_name,
-                    KeySchema=[{'AttributeName': 'movie_id', 'KeyType': 'HASH'}],
-                    AttributeDefinitions=[
-                        {'AttributeName': 'movie_id', 'AttributeType': ddbtypes.NUMBER}
-                    ],
-                    BillingMode='PAY_PER_REQUEST'
-                )
-
-                logger.info("Waiting for table %s to be created", table_name)
-                table.meta.client.get_waiter('table_exists').wait(TableName=table_name)
-
-        create_table("movies")
-
-        def process_partition(partition: Iterable[Row]):
-            dynamodb_resource = get_dynamodb_resource()
-            with dynamodb_resource.Table("movies").batch_writer() as writer:
+            with dynamodb_resource.Table(table_name).batch_writer() as writer:
                 for row in partition:
                     writer.put_item(Item={
                         "movie_id": row["movie_id"],
                         "genres": row["genres"],
                         "year": row["year"],
                         "rating_count": row["rating_count"],
-                        "rating_avg": Decimal(str(row["rating_avg"])),
+                        "rating_avg": Decimal(str(row["rating_avg"])) if row["rating_avg"] is not None else Decimal(),
                         "tmdb_id": row["tmdb_id"],
                         "imdb_id": row["imdb_id"],
                         "title": row["title"],
                         "description": row["description"],
                         "poster_uri": row["poster_uri"],
-                        "budget": Decimal(str(row["budget"])),
+                        "budget": Decimal(str(row["budget"])) if row["budget"] is not None else None,
                         "release_date": row["release_date"],
                         "origin_countries": row["origin_countries"],
                     })
+            return _process
 
-        self._movies_df.foreachPartition(process_partition)
+        return _process
+
+
+    
 
 
 @inject

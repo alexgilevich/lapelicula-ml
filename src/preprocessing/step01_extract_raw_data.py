@@ -55,13 +55,13 @@ class ExtractRawDataJobStep(JobStep):
         ])
 
         self._raw_movies_df = (
-            self.spark.read.option("header", True).schema(movies_schema).csv(os.path.join(data_path, "movies.csv"))
+            self.spark.read.option("header", True).schema(movies_schema).csv(os.path.join(os.path.expanduser(data_path), "movies.csv"))
         )
         self._raw_ratings_df = (
-            self.spark.read.option("header", True).schema(ratings_schema).csv(os.path.join(data_path, "ratings.csv"))
+            self.spark.read.option("header", True).schema(ratings_schema).csv(os.path.join(os.path.expanduser(data_path), "ratings.csv"))
         )
         self._raw_links_df = (
-            self.spark.read.option("header", True).schema(links_schema).csv(os.path.join(data_path, "links.csv"))
+            self.spark.read.option("header", True).schema(links_schema).csv(os.path.join(os.path.expanduser(data_path), "links.csv"))
         )
 
     def process(self) -> None:

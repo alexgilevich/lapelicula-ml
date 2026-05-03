@@ -38,10 +38,13 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
       to keep local development unblocked, but warn the user.
     """
 
+
     # noinspection PyShadowingNames
-    def use_default_catalog(spark_session: SparkSession, catalog_name: str, schema_name: str) -> None:
+    def configure_session(spark_session: SparkSession, catalog_name: str, schema_name: str) -> SparkSession:
         spark_session.catalog.setCurrentCatalog(catalog_name)
+        spark_session.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
         spark_session.catalog.setCurrentDatabase(schema_name)
+        return spark_session
 
     # 1) If an active session already exists (Databricks jobs/notebooks), prefer it
     try:
@@ -49,8 +52,7 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
         if active is not None:
             catalog_name = config.string("UC_DEFAULT_CATALOG_NAME")
             schema_name = config.string("UC_DEFAULT_SCHEMA_NAME")
-            use_default_catalog(active, catalog_name, schema_name)
-            return active
+            return configure_session(active, catalog_name, schema_name)
     except Exception as e:
         logger.error("Unexpected error occurred", exc_info=e)
 
@@ -74,8 +76,7 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
     #     # If neither cluster nor warehouse is provided, Connect may still leverage default profile.
     #     # We don't pass sdk config explicitly to avoid tight coupling with SDK types; env vars are standard.
     #     active = builder.getOrCreate()
-    #     use_default_catalog(active, catalog_name, schema_name)
-    #     return active
+    #     return configure_session(active, catalog_name, schema_name)
     # except Exception:
     #     # Either library missing or configuration incomplete
     #     warnings.warn(
@@ -90,25 +91,31 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
     # We still need to set PYSPARK_PYTHON env var because the Worker daemon (which is not part of this process)
     # needs to know which python to use when spawning executors, and it often looks at the env var inherited
     # or passed during context init. For local standalone, sys.executable ensures the venv is used.
-    os.environ["PYSPARK_PYTHON"] = sys.executable
-    os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+    #os.environ["PYSPARK_PYTHON"] = sys.executable
+    #os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
-    return (
+    # Java 17-21 is required because of -Djava.security.manager=allow
+    return configure_session(
         SparkSession.builder
-        .appName(app_name)
-        .master("spark://127.0.0.1:7077")
-        .config("spark.driver.memory", "4g")
-        .config("spark.driver.cores", "2")
-        .config("spark.executor.memory", "4g")
-        .config("spark.python.worker.memory", "4g")
-        .config("spark.pyspark.python", sys.executable)
-        .config("spark.pyspark.driver.python", sys.executable)
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "io.unitycatalog.spark.UCSingleCatalog") # spark_catalog is the system catalog created automatically by UC
-        .config(f"spark.sql.catalog.{catalog_name}", "io.unitycatalog.spark.UCSingleCatalog") # lapelicula is our own catalog used to read/write tables/models
-        .config(f"spark.sql.catalog.{catalog_name}.uri", "http://localhost:8080")
-        .config(f"spark.sql.catalog.{catalog_name}.token", "")
-        .config("spark.sql.defaultCatalog", catalog_name)
-        .config("spark.sql.defaultSchema", schema_name)
-        .getOrCreate()
+            .appName(app_name)
+            .master("local[4]")
+            .config("spark.driver.memory", "4g")
+            .config("spark.driver.cores", "2")
+            .config("spark.executor.memory", "4g")
+            .config("spark.python.worker.memory", "4g")
+            .config("spark.driver.extraJavaOptions", "-Djava.security.manager=allow")
+            .config("spark.executor.extraJavaOptions", "-Djava.security.manager=allow")
+            .config('spark.jars.packages', 'io.delta:delta-spark_2.13:4.0.1,io.unitycatalog:unitycatalog-spark_2.13:0.3.0')
+            #.config("spark.pyspark.python", sys.executable)
+            #.config("spark.pyspark.driver.python", sys.executable)
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog", "io.unitycatalog.spark.UCSingleCatalog") # spark_catalog is the system catalog created automatically by UC
+            .config(f"spark.sql.catalog.{catalog_name}", "io.unitycatalog.spark.UCSingleCatalog") # lapelicula is our own catalog used to read/write tables/models
+            .config(f"spark.sql.catalog.{catalog_name}.uri", "http://localhost:8080")
+            .config(f"spark.sql.catalog.{catalog_name}.token", "")
+            .config("spark.sql.defaultCatalog", catalog_name)
+            .config("spark.sql.defaultSchema", schema_name)
+            .getOrCreate(),
+        catalog_name,
+        schema_name
     )
