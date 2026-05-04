@@ -2,23 +2,11 @@ import os
 
 import pandas as pd
 from pyspark.sql.types import * 
-
-import _includes
-import mlflow
 from features import UserPreferences
-from mlflow_utils import MLFlowModelManager
 from model import Model
-from dependency_injector.wiring import inject, Provide
-from pyspark.sql import SparkSession, DataFrame
-from containers import ContainerFactory
-from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
-from config import Config, SecretsManager
 from job_step import JobStep
 from logging_factory import get_logger
-from mlflow.models import infer_signature
-import boto3
-import shutil
 import numpy as np
 from tabulate import tabulate
 
@@ -59,13 +47,6 @@ all_movies_pdf = all_movies_pdf.set_index('movie_id')[['title', 'genres', 'year'
 for i, example in enumerate(examples):
     logger.info(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
     input = pd.DataFrame([{
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
-        #"user_preferences": UserPreferences(action=5).to_dict(),
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=5, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=5, war=0, western=0).to_dict(),
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-        #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
         "user_preferences": example.to_dict(),
         "movies": all_movies_data
     }])

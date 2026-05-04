@@ -54,7 +54,7 @@ class TrainModelJobStep(JobStep):
         self._training_movies_df = self.spark.table("training_movies")
         self._training_users_df = self.spark.table("training_users")
         self._training_labels_df = self.spark.table("training_labels")
-        self._movies_preprocessed_df = self.spark.table("test_catalog.default.movies_preprocessed")
+        self._movies_preprocessed_df = self.spark.table("movies_preprocessed")
 
     def process(self) -> None:
         assert self._training_movies_df is not None
@@ -72,7 +72,7 @@ class TrainModelJobStep(JobStep):
         movie_train_data_pdf = self._training_movies_df.orderBy(F.col('row_id')).toPandas()
         user_train_data_pdf = self._training_users_df.orderBy(F.col('row_id')).toPandas()
         y_pdf = self._training_labels_df.orderBy(F.col('row_id')).toPandas()
-        model = Model(num_outputs = num_model_layer_outputs, num_epochs=num_epochs)
+        model = Model(num_outputs = num_model_layer_outputs, num_epochs=num_epochs, verbose_level=2)
 
         with mlflow.start_run() as run:
             logger.info("User training initial df data shape: %s, columns: %s", movie_train_data_pdf.shape, movie_train_data_pdf.columns)
@@ -83,23 +83,22 @@ class TrainModelJobStep(JobStep):
             movie_train_data = movie_train_data_pdf.drop(columns=['row_id', 'title'], errors="ignore").to_numpy()
             user_train_data  = user_train_data_pdf.drop(columns=['row_id'], errors="ignore").to_numpy()
             y_labels         = y_pdf.drop(columns=['row_id']).to_numpy()
-            
-            metrics = model.train(user_train_data, movie_train_data, y_labels)
+            all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
+
+            metrics = model.train(user_train_data, movie_train_data, y_labels, all_movies_data)
 
             # log params
-            mlflow.log_params({ 
-                "num_outputs": model.num_outputs,
-                "num_epochs": model.num_epochs,
-            })
+            mlflow.log_params(model.get_params())
             
+            # log metrics
             mlflow.log_metrics(metrics)
 
 
-            all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
+            
             # log model
             model_input_signature = pd.DataFrame([{
                 "user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
-                "movies": all_movies_data[:3000]
+                "movies": all_movies_data[:1000]
             }])
             inference_params = { "limit": 1000 }
             signature = infer_signature(
@@ -107,10 +106,6 @@ class TrainModelJobStep(JobStep):
                 model_output = model.predict(model_input_signature, inference_params),
                 params = inference_params
             )
-
-            #temp
-            orig = model.predict(model_input_signature, inference_params)
-            logger.info("orig: %s", orig)
             
             
             logger.info("Model signature is: %s", signature)
@@ -128,14 +123,14 @@ class TrainModelJobStep(JobStep):
                     if os.path.exists(full_local_model_save_path):
                         shutil.rmtree(full_local_model_save_path)
                     model_save_info = mlflow.pyfunc.save_model(full_local_model_save_path, python_model=model, signature=signature,
-                                                               code_paths=["../model.py", "../features.py"])
+                                                               code_paths=[os.path.abspath("../model.py"), os.path.abspath("../features.py")])
                     logger.info("Successfully saved the trained model to the path `%s` with the following details: %s", full_local_model_save_path, model_save_info)
                 except Exception as e:
                     logger.warning("Failed to save the trained model to the path `%s`", full_local_model_save_path, exc_info=e)
 
-                #temp
-                loaded = mlflow.pyfunc.load_model(full_local_model_save_path).predict(model_input_signature, inference_params)
-                logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
+                # test loading the model back and doing a prediction to ensure the saved model is not corrupted before uploading to S3
+                _ = mlflow.pyfunc.load_model(full_local_model_save_path).predict(model_input_signature, inference_params)
+                
 
                 try:
                     access_key = self._secrets_manager.get("AWS_ACCESS_KEY_ID")
@@ -149,7 +144,7 @@ class TrainModelJobStep(JobStep):
                     )
 
                     exclude = {'__pycache__'}
-                    for path, dirs, files in os.walk(local_model_save_path, topdown=True):
+                    for path, dirs, files in os.walk(full_local_model_save_path, topdown=True):
                         dirs[:] = [d for d in dirs if d not in exclude]
                         for file in files:
                             file_s3_key = os.path.join(model_save_prefix, os.path.normpath(path[len(local_model_save_path):] + '/' + file))

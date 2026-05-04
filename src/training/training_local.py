@@ -1,24 +1,10 @@
 import os
-
 import pandas as pd
 from pyspark.sql.types import * 
-
 import _includes
-import mlflow
-from features import UserPreferences
-from mlflow_utils import MLFlowModelManager
 from model import Model
-from dependency_injector.wiring import inject, Provide
-from pyspark.sql import SparkSession, DataFrame
-from containers import ContainerFactory
-from dataframe import DataFrameWriter
 from pyspark.sql import functions as F
-from config import Config, SecretsManager
-from job_step import JobStep
 from logging_factory import get_logger
-from mlflow.models import infer_signature
-import boto3
-import shutil
 import numpy as np
 import tensorflow as tf
 
@@ -43,7 +29,7 @@ movie_train_data_pdf = pd.read_csv("train_data_movies.csv", dtype=movie_train_da
 user_train_data_pdf = pd.read_csv("train_data_users.csv", dtype=user_train_data_schema)
 y_pdf = pd.read_csv("train_data_y.csv", dtype=y_schema)
 
-model_save_path = "model_binary_v10.keras"
+model_save_path = "model.keras"
 model = Model(num_outputs = DEFAULT_NUM_MODEL_LAYER_OUTPUTS, num_epochs=DEFAULT_NUM_EPOCHS, model_save_path=model_save_path)
 
 
