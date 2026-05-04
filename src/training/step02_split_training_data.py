@@ -11,6 +11,8 @@ from logging_factory import get_logger
 
 logger = get_logger(__name__)
 
+# This file is not a standalone step, but rather a helper to split the training_base table into three separate tables for movies, users and labels.
+# This is done to ensure consistency of the data and to simplify the later training step, where we need to read movies and users separately and join them by row_id (which is a random number).
 class SplitTrainingDataJobStep(JobStep):
     """
     Step 1: Generate training data

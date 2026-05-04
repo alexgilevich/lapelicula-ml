@@ -33,8 +33,8 @@ class L2Norm(Layer):
 
 
 
-
-class CustomTrainingStepModel(tf.keras.Model):
+@tf.keras.utils.register_keras_serializable()
+class TrainingKerasModel(tf.keras.Model):
     """
     This class implements a custom training step to perform global negative sampling for the ranking loss component of the model's loss function. The global negative sampling is performed by sampling negative movies from the entire set of movies, rather than just from the batch, which allows for a more diverse set of negative samples and can lead to better model performance.
     @param base_model: The base Keras model that takes user and movie inputs and produces a predicted rating.
@@ -107,7 +107,23 @@ class CustomTrainingStepModel(tf.keras.Model):
         )
 
         return self.compute_metrics((user_matrix, movie_matrix, movie_ids), y_true['y_scaled'], pos_scores, mse_loss, rank_loss, total_loss)
+    
+    def test_step(self, data):
+        # extract what we pass into the fit function
+        (user_matrix, movie_matrix), y_true = data
         
+        # Compute predictions
+        y_pred = self([user_matrix, movie_matrix], training=False)
+        
+        mse = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - y_pred['y_scaled']))
+        mae = tf.reduce_mean(tf.abs(y_true['y_scaled'] - y_pred['y_scaled']))
+
+
+        # Return a dict with standard metrics values (e.g. {"mse": mse, "mae": mae})
+        return {
+            "mse": mse, 
+            "mae": mae
+        }
 
     def call(self, inputs):
         return self.base_model(inputs)
@@ -122,7 +138,7 @@ class CustomTrainingStepModel(tf.keras.Model):
         
         # compute and return a dictionary of metrics
         return {
-            **metric_results - { "loss": 0 },  # remove the default loss metric since we compute our own combined loss
+            **{k: v for k, v in metric_results.items() if k != "loss"},  # remove the default loss metric since we compute our own combined loss
             self.total_loss_tracker.name: self.total_loss_tracker.result(),
             self.mse_tracker.name: self.mse_tracker.result(),
             self.rank_tracker.name: self.rank_tracker.result()
@@ -138,16 +154,43 @@ class CustomTrainingStepModel(tf.keras.Model):
         result = [self.total_loss_tracker, self.mse_tracker, self.rank_tracker]
         result.extend(super().metrics)
         return result
-
-
+    
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({"output_names": self.output_names})
+        cfg.update({"base_model": self.base_model.get_config()})
+        return cfg
+    
+    @classmethod
+    def from_config(cls, config):
+        return cls(tf.keras.Model.from_config(config["base_model"]), None, config["output_names"])
 
 class Model(mlflow.pyfunc.PythonModel):
-    def __init__(self, num_outputs = 32, num_epochs = 30, model_save_path = "model_binary.keras"):
+    """
+    A custom model class for training and evaluating a neural network for movie recommendation.
+    The model is trained using a custom training loop implemented in the TrainingKerasModel class, which performs global negative sampling for the ranking loss component of the loss function. 
+    The model is evaluated using MSE, MAE and NDCG metrics, where the NDCG is computed offline by generating predictions for the test set and comparing them to the true ratings, grouped by user.
+    @param num_outputs: The number of output dimensions for the user and movie embeddings in the model (default: 32)
+    @param num_epochs: The number of epochs to train the model for (default: 30)
+    @param batch_size: The batch size to use during training (default: 2048)
+    @param model_save_path: The local file path to save the trained model (default: "model_binary.keras")
+    @param verbose_level: The verbosity level for training output (default: 1)
+    """
+    def __init__(self, num_outputs = 32, num_epochs = 30, batch_size = 2048, model_save_path = "model_binary.keras", verbose_level = 1):
         self._tf_model = None
         self.num_outputs = num_outputs
         self.num_epochs = num_epochs
+        self.batch_size = batch_size
         self.model_save_path = model_save_path
-        
+        self.verbose_level = verbose_level
+    
+    def get_params(self):
+        return {
+            "num_outputs": self.num_outputs,
+            "num_epochs": self.num_epochs,
+            "batch_size": self.batch_size,
+            "model_save_path": self.model_save_path
+        }
     
     def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, y_labels: numpy.ndarray, all_movies: numpy.ndarray) -> dict:
         """
@@ -240,9 +283,8 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_unscaled": unscaled_output
             })
 
-        rec_model = CustomTrainingStepModel(model, all_movies, ['y_scaled', 'y_unscaled'])
+        rec_model = TrainingKerasModel(model, all_movies, ['y_scaled', 'y_unscaled'])
         
-        model.summary()
         rec_model.summary()
         
         compile_args = {
@@ -251,28 +293,36 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_scaled": tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
             },
             "metrics": {
-                "y_scaled": [tf.keras.metrics.MeanSquaredError(name="tf_mse")],
+                "y_scaled": [tf.keras.metrics.MeanSquaredError(name="tf_mse"), tf.keras.metrics.MeanAbsoluteError(name="tf_mae")],
                 "y_unscaled": []
             },
             #"run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
         }
         rec_model.compile(**compile_args)
-        model.compile(**compile_args) # compile the base model as well, just for evaluation purposes (we won't use its train_step)
 
         rec_model.fit(
             [user_train_split, movie_train_split, movie_ids_train_split],
             {"y_scaled": y_scaler(y_train_split).numpy()}, 
-            epochs=self.num_epochs, 
-            verbose=1,
-            batch_size = 2048
+            epochs=self.num_epochs,
+            verbose=self.verbose_level,
+            batch_size = self.batch_size
         )
 
-        metrics = self._evaluate_trained_model(model, movie_test_split, user_test_split, user_ids_test_split, y_test_split) 
+        metrics = self._evaluate_trained_model(
+            rec_model, 
+            movie_test_split, 
+            user_test_split, 
+            user_ids_test_split, 
+            {
+                "y_scaled": y_scaler(y_test_split).numpy(),
+                "y_unscaled": y_test_split
+            }
+        ) 
 
         logger.info("Evaluation phase. Here are your metrics: %s", metrics)
 
         # save the model
-        self._tf_model = model
+        self._tf_model = rec_model
         
         return metrics
 
@@ -286,18 +336,19 @@ class Model(mlflow.pyfunc.PythonModel):
         :param y_test_split: True ratings for the test set (unscaled!)
         :return: A dictionary containing the computed metrics (MSE, MAE, NDCG) for the test set
         """
-
+        
         metrics = model.evaluate(
             [user_test_split, movie_test_split],
             y_test_split,
             return_dict=True,
             verbose=2
         )
-        preds = model.predict([user_test_split, movie_test_split])["y_scaled"]
+        metrics = {k: v.numpy() for k, v in metrics.items()}
+        preds = model.predict([user_test_split, movie_test_split])
         ndcg = self._compute_ndcg_offline(
             y_test_split,
-            preds.flatten(),
-            user_ids_test_split  # you MUST keep these!
+            preds,
+            user_ids_test_split
         )
         metrics["ndcg"] = ndcg
         return metrics
@@ -306,6 +357,9 @@ class Model(mlflow.pyfunc.PythonModel):
     @staticmethod
     def _compute_ndcg_offline(y_true, y_pred, user_ids, k=10):
         """Compute NDCG@k offline by generating predictions for the test set and comparing them to the true ratings, grouped by user. This function assumes that the input y_true, y_pred and user_ids are aligned (i.e. the i-th element of each corresponds to the same user-movie pair) and that user_ids contains the user identifiers for each prediction, which are necessary for grouping the predictions by user."""
+        
+        y_true_scaled = y_true['y_scaled'].flatten()
+        y_pred_scaled = y_pred['y_scaled'].flatten()
 
         # group by user
         unique_users = np.unique(user_ids)
@@ -313,8 +367,8 @@ class Model(mlflow.pyfunc.PythonModel):
 
         for user_id in unique_users:
             mask = user_ids == user_id
-            y_t = y_true[mask]
-            y_p = y_pred[mask]
+            y_t = y_true_scaled[mask]
+            y_p = y_pred_scaled[mask]
 
             # if there are less than k movies for this user still caculate the metric but adjust k to the number of ratings for this user
             k = min(k, len(y_t))
