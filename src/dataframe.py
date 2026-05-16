@@ -23,4 +23,4 @@ class DataFrameWriter:
         else:
             overwrite = self.config.bool("OVERWRITE", True)
             mode = "overwrite" if overwrite else "errorifexists"
-            dataframe.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable("raw_movies")
+            dataframe.write.format("delta").mode(mode).option("overwriteSchema", "true").saveAsTable(table_name)

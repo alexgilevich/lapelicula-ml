@@ -1,11 +1,18 @@
 {
     "configurations": [
         {
-            "name": "Python Debugger: Python File",
+            "name": "Python Debugger: Current Python File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "cwd": "${fileDirname}"
+        },
+        {
+            "name": "Python Debugger: Train Model Step",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/training/step03_train_model.py",
+            "cwd": "${workspaceFolder}/src/training/"
         }
     ]
 }

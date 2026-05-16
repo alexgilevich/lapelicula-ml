@@ -81,7 +81,7 @@ class GenerateSyntheticUsersJobStep(JobStep):
                 final_df = sdf
             else:
                 final_df = final_df.unionByName(sdf)
-        self._ratings_df = (final_df if final_df is not None else ratings_with_movies_df.limit(0)).select(*self._ratings_df.columns).cache()
+        self._ratings_df = (final_df if final_df is not None else ratings_with_movies_df.limit(0)).select(*self._ratings_df.columns)
         logger.info('Generated synthetic users... Current ratings count = %d', self._ratings_df.count())
         
     def save(self) -> None:
