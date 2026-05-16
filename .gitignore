@@ -224,6 +224,8 @@ data/*
 
 # ML artifacts
 model_artifacts/*
+!model_artifacts/__local__/.keep
+
 
 # Databricks
 .databricks/

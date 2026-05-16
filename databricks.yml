@@ -21,14 +21,21 @@ variables:
   schema:
     description: The schema to use
     default: default
+  run_as:
+    description: Service principal to use to run the jobs
 
-    
+run_as:
+  service_principal_name: ${var.run_as}
+
+
 targets:
   dev:
     mode: development
     default: true
     workspace:
       host: https://dbc-263251e5-68ed.cloud.databricks.com
+    run_as:
+      user_name: ${workspace.current_user.userName}
 
   prod:
     mode: production
