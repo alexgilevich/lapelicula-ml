@@ -67,7 +67,6 @@ class OversampleRatingsJobStep(JobStep):
             sampled = subset.sample(withReplacement=True, fraction=fraction, seed=seed)
             resampled = resampled.unionByName(sampled)
 
-        resampled = resampled.cache()
         logger.info('Completed oversampling ratings b y genre... Current ratings count = %d', resampled.count())
         
         return resampled

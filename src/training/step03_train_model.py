@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
 DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 256
-DEFAULT_NUM_EPOCHS = 2
+DEFAULT_NUM_EPOCHS = 10
 
 class TrainModelJobStep(JobStep):
     """
@@ -109,7 +109,9 @@ class TrainModelJobStep(JobStep):
             
             
             logger.info("Model signature is: %s", signature)
-            model_log_info = mlflow.pyfunc.log_model(model_name, python_model=model, code_paths=["../model.py", "../features.py"])
+            included_code_paths = [os.path.abspath("../model.py"), os.path.abspath("../features.py"), os.path.abspath("../logging_factory.py")]
+
+            model_log_info = mlflow.pyfunc.log_model(model_name, python_model=model, code_paths=included_code_paths)
             logger.info("Successfully logged the trained model: %s", model_log_info)
             
             
@@ -123,7 +125,7 @@ class TrainModelJobStep(JobStep):
                     if os.path.exists(full_local_model_save_path):
                         shutil.rmtree(full_local_model_save_path)
                     model_save_info = mlflow.pyfunc.save_model(full_local_model_save_path, python_model=model, signature=signature,
-                                                               code_paths=[os.path.abspath("../model.py"), os.path.abspath("../features.py")])
+                                                               code_paths=included_code_paths)
                     logger.info("Successfully saved the trained model to the path `%s` with the following details: %s", full_local_model_save_path, model_save_info)
                 except Exception as e:
                     logger.warning("Failed to save the trained model to the path `%s`", full_local_model_save_path, exc_info=e)

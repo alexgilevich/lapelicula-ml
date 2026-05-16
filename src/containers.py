@@ -24,9 +24,21 @@ class ContainerFactory:
 
 
 class _DatabricksContainer(containers.DeclarativeContainer):
-    dbutils = providers.Object(None)
+    def get_dbutils():
+        try:
+            import IPython
+            return IPython.get_ipython().user_ns["dbutils"]
+        except ImportError:
+            raise ImportError("IPython is not available. Make sure you're not in a non-IPython environment.")
+        
+    spark_application_name = providers.Object("lapelicula-databricks-job")
+    dbutils = providers.Factory(get_dbutils)
     config = providers.Factory(ArgumentsConfig)
     secrets_manager = providers.Factory(DBUtilsSecretsManager, config=config, dbutils=dbutils)
+    spark_session = providers.Factory(get_spark, spark_application_name, config)
+    model_manager = providers.Factory(MLFlowModelManager, config=config)
+    dataframe_writer = providers.Factory(DataFrameWriter, spark_session=spark_session, config=config)
+    tmdb_client = providers.Factory(TMDBClient, secrets_manager=secrets_manager)
 
 class _LocalDevelopmentContainer(containers.DeclarativeContainer):
     spark_application_name = providers.Object("local-development")

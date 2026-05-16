@@ -2,17 +2,14 @@ import numpy
 import pandas as pd
 import tensorflow as tf
 from keras import Layer
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 import mlflow
-pd.set_option("display.precision", 1)
-import logging
 import numpy as np
 import os
 from features import UserPreferences
 from logging_factory import get_logger
-import pydantic
 
+pd.set_option("display.precision", 1)
 logger = get_logger(__name__)
 
 
@@ -415,7 +412,7 @@ class Model(mlflow.pyfunc.PythonModel):
         return [self._predict_single(request['user_preferences'], request['movies'], params) for _, request in model_input.iterrows()]
         
         
-    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[list]:
+    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[tuple[int, float]]:
         user_preferences = user_preferences or {}
         params = params or {}
         
@@ -446,7 +443,7 @@ class Model(mlflow.pyfunc.PythonModel):
         sorted_movies_matrix = movies_matrix[sorted_index][:limit]  #using unscaled vectors for display
 
         return [
-            [row[0], np.round(sorted_ypu[i, 0], 1)]
+            (row[0], np.round(sorted_ypu[i, 0], 1))
             for i, row in enumerate(sorted_movies_matrix)
         ]
         

@@ -9,12 +9,18 @@ from config import SecretsManager
 @dataclass
 class TMDBMovie:
     id: int
+    imdb_id: int
     title: str
     poster_uri: str #poster_path
-    budget: float
+    budget: int
     description: str #overview
     release_date: datetime.date
     origin_countries: list[str]
+    vote_average: float
+    revenue: int
+    production_countries: list[str]
+    tagline: str
+    adult: bool
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -45,5 +51,11 @@ class TMDBClient:
             budget = movie_info["budget"],
             description = movie_info["overview"],
             release_date = datetime.date.fromisoformat(movie_info["release_date"]),
-            origin_countries = movie_info["origin_country"]
+            origin_countries = movie_info["origin_country"],
+            vote_average = movie_info["vote_average"],
+            revenue = movie_info["revenue"],
+            production_countries = [country['name'] for country in movie_info["production_countries"]],
+            tagline = movie_info["tagline"],
+            adult = movie_info["adult"],
+            imdb_id = movie_info["imdb_id"]
         )

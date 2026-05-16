@@ -40,6 +40,20 @@ class EnrichMoviesJobStep(JobStep):
         self._movies_enriched_df: DataFrame | None = None
         self._movies_tmdb_info_df: DataFrame | None = None
         self._client = client
+        self.enriched_movie_schema = T.StructType([
+            T.StructField("id", T.IntegerType(), True),
+            T.StructField("title", T.StringType(), True),
+            T.StructField("poster_uri", T.StringType(), True),
+            T.StructField("budget", T.LongType(), True),
+            T.StructField("description", T.StringType(), True),
+            T.StructField("release_date", T.StringType(), True),
+            T.StructField("origin_countries", T.ArrayType(T.StringType()), True),
+            T.StructField("production_countries", T.ArrayType(T.StringType()), True),
+            T.StructField("vote_average", T.FloatType(), True),
+            T.StructField("revenue", T.LongType(), True),
+            T.StructField("tagline", T.StringType(), True),
+            T.StructField("adult", T.BooleanType(), True),
+        ])
 
     def _table_exists(self, full_name: str) -> bool:
         try:
@@ -52,22 +66,17 @@ class EnrichMoviesJobStep(JobStep):
         self._links_df = self.spark.table("raw_links")
         tmdb_tbl = "movies_tmdb_info"
         if self._table_exists(tmdb_tbl):
-            self._movies_tmdb_info_df = self.spark.table(tmdb_tbl)
+            self._movies_tmdb_info_df = self.spark.table(tmdb_tbl).to(self.enriched_movie_schema)
+
+
 
     ### Helper to fetch missing TMDB info in parallel
     ### This is done with a thread pool and not with Spark for now
     def _fetch_missing_tmdb(self, missing_tmdb_ids: List[int]) -> DataFrame:
         if not missing_tmdb_ids:
-            return self.spark.createDataFrame([], schema=T.StructType([
-                T.StructField("id", T.IntegerType(), False),
-                T.StructField("title", T.StringType(), True),
-                T.StructField("poster_uri", T.StringType(), True),
-                T.StructField("budget", T.DoubleType(), True),
-                T.StructField("description", T.StringType(), True),
-                T.StructField("release_date", T.DateType(), True),
-                T.StructField("origin_countries", T.ArrayType(T.StringType()), True),
-            ]))
-
+            return self.spark.createDataFrame([], schema=self.enriched_movie_schema)
+        
+        total = len(missing_tmdb_ids)
 
         def get_one(tmdb_id: int) -> Dict[str, Any]:
             if tmdb_id is None:
@@ -81,22 +90,19 @@ class EnrichMoviesJobStep(JobStep):
             except Exception as e:
                 logger.warning(f"Failed to fetch TMDB info for movie {tmdb_id}: {e}")
                 return {}
+            finally:
+                nonlocal total
+                total -= 1
+                if total % 100 == 0:
+                    logger.info("Left %d movies to load", total)
 
-        with ThreadPoolExecutor() as pool:
+        with ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(get_one, missing_tmdb_ids))
 
         # filter empties
         results = [r for r in results if r and r.get("id") is not None]
-        schema = T.StructType([
-            T.StructField("id", T.IntegerType(), False),
-            T.StructField("title", T.StringType(), True),
-            T.StructField("poster_uri", T.StringType(), True),
-            T.StructField("budget", T.LongType(), True),
-            T.StructField("description", T.StringType(), True),
-            T.StructField("release_date", T.StringType(), True),
-            T.StructField("origin_countries", T.ArrayType(T.StringType()), True),
-        ])
-        df = self.spark.createDataFrame(results, schema=schema)
+        
+        df = self.spark.createDataFrame(results, schema=self.enriched_movie_schema)
         # Cast release_date to date
         df = df.withColumn("release_date", F.to_date("release_date"))
         return df
@@ -108,15 +114,7 @@ class EnrichMoviesJobStep(JobStep):
         movies_with_links = self._movies_preprocessed_df.join(self._links_df, on="movieId", how="left")
 
         # Prepare/cached TMDB attributes table
-        tmdb_attr_df = self._movies_tmdb_info_df if self._movies_tmdb_info_df else self.spark.createDataFrame([], schema=T.StructType([
-            T.StructField("id", T.IntegerType(), False),
-            T.StructField("title", T.StringType(), True),
-            T.StructField("poster_uri", T.StringType(), True),
-            T.StructField("budget", T.DoubleType(), True),
-            T.StructField("description", T.StringType(), True),
-            T.StructField("release_date", T.DateType(), True),
-            T.StructField("origin_countries", T.ArrayType(T.StringType()), True),
-        ]))
+        tmdb_attr_df = self._movies_tmdb_info_df if self._movies_tmdb_info_df else self.spark.createDataFrame([], schema=self.enriched_movie_schema)
 
         needed_ids_df = movies_with_links.select("tmdbId").where(F.col("tmdbId").isNotNull()).distinct()
         have_ids_df = tmdb_attr_df.select(F.col("id").alias("tmdbId")).distinct()

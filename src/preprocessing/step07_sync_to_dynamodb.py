@@ -60,6 +60,11 @@ class SyncDataToDynamoDbJobStep(JobStep):
             F.col("budget").alias("budget"),
             F.col("release_date").cast(T.StringType()).alias("release_date"),
             F.col("origin_countries").alias("origin_countries"),
+            F.col("production_countries").alias("production_countries"),
+            F.col("vote_average").alias("vote_average"),
+            F.col("revenue").alias("revenue"),
+            F.col("tagline").alias("tagline"),
+            F.col("adult").alias("adult"),
         ).dropDuplicates(["movie_id"])
     
 
@@ -118,14 +123,19 @@ class SyncDataToDynamoDbJobStep(JobStep):
                         "year": row["year"],
                         "rating_count": row["rating_count"],
                         "rating_avg": Decimal(str(row["rating_avg"])) if row["rating_avg"] is not None else Decimal(),
+                        "vote_average": Decimal(row["vote_average"])if row["vote_average"] is not None else Decimal(),
                         "tmdb_id": row["tmdb_id"],
                         "imdb_id": row["imdb_id"],
                         "title": row["title"],
                         "description": row["description"],
+                        "tagline": row["tagline"],
                         "poster_uri": row["poster_uri"],
                         "budget": Decimal(str(row["budget"])) if row["budget"] is not None else None,
+                        "revenue": Decimal(str(row["revenue"])) if row["revenue"] is not None else None,
                         "release_date": row["release_date"],
                         "origin_countries": row["origin_countries"],
+                        "production_countries": row["production_countries"],
+                        "adult": row["adult"],
                     })
             return _process
 
