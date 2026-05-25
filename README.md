@@ -69,6 +69,7 @@ All metrics (NDCG, MSE, MAE, etc.) are logged and tracked in MLFlow Experiments.
 * Predictions on the whole movie data set (~9700 movies currently)
 * MSE loss function with negative sampling
 * Oversampling by low-represented genres
+* Support for both Databricks deployments and local debugging using in-process Apache Spark in client mode using the same code (run modes are configured using dependency injection and IoC containers)
    
 <img width="531" height="455" alt="La Pelicula Architecture Diagram" src="https://github.com/user-attachments/assets/fa0ed504-6629-446a-a8ff-9b337e44027b" />
 
