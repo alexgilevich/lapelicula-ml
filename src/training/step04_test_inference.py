@@ -1,3 +1,6 @@
+# The script loads a trained model using MLFlow and tests inference by making predictions for different user preferences. It retrieves the preprocessed movies data from a Unity Catalog table, converts it to a format suitable for the model, and then uses the model to generate movie recommendations based on the provided user preferences. The recommendations are then joined with the original movies data to display the recommended movies along with their details.
+# The script is not included in the main training pipeline and is meant to be run separately for testing purposes. It demonstrates how to load a trained model, prepare input data, and perform inference to get recommendations based on user preferences.
+
 import os
 
 import pandas as pd
@@ -29,7 +32,7 @@ DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-movie-recommender-model-18-feb"
 DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 256
 DEFAULT_NUM_EPOCHS = 2
 
-class TrainModelJobStep(JobStep):
+class TestInferenceWithTrainedModelJobStep(JobStep):
     """
     Train and publish a model on Unity Catalog
     
@@ -49,7 +52,7 @@ class TrainModelJobStep(JobStep):
         """
         Initialize dataframes for training
         """
-        self._movies_preprocessed_df = self.spark.table("test_catalog.default.movies_preprocessed").withColumnRenamed("movieId", "movie_id")
+        self._movies_preprocessed_df = self.spark.table("movies_preprocessed").withColumnRenamed("movieId", "movie_id")
 
     def process(self) -> None:
         model_name = self.config.string("MLFLOW_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
@@ -61,6 +64,7 @@ class TrainModelJobStep(JobStep):
         
         model = mlflow.pyfunc.load_model(full_local_model_save_path)
         examples = [
+            UserPreferences(kids = 5, animation = 5, adventure = 0, comedy = 0, mystery = 0, crime = 0, horror = 0, sci_fi = 0),
             UserPreferences(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5),
             UserPreferences(kids = 5, animation = 5, adventure = 4.5, comedy = 4.5, mystery = 2, crime = 1, horror = 0.5, sci_fi = 4),
             UserPreferences( comedy = 4.5, romance = 5, mystery = 2, crime = 0.5, horror = 0.5, sci_fi = 1.5),
@@ -74,13 +78,6 @@ class TrainModelJobStep(JobStep):
         for i, example in enumerate(examples):
             print(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
             input = pd.DataFrame([{
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
-                #"user_preferences": UserPreferences(action=5).to_dict(),
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=5, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=0, drama=0, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=0, sci_fi=0, thriller=5, war=0, western=0).to_dict(),
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
-                #"user_preferences": UserPreferences(action=0, animation=0, comedy=5, crime=1, documentary=0, drama=3, family=0, fantasy=0, film_noir=0, history=0, horror=0, music=0, mystery=0, romance=5, sci_fi=0, thriller=0, war=0, western=0).to_dict(),
                 "user_preferences": example.to_dict(),
                 "movies": all_movies_data
             }])
@@ -111,7 +108,7 @@ def run(
     model_manager: MLFlowModelManager = Provide["model_manager"],
     secrets_manager: SecretsManager = Provide["secrets_manager"]
 ):
-    step = TrainModelJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer, model_manager=model_manager, secrets_manager=secrets_manager)
+    step = TestInferenceWithTrainedModelJobStep(spark=spark_session, config=config, dataframe_writer=dataframe_writer, model_manager=model_manager, secrets_manager=secrets_manager)
     step.load()
     step.process()
     step.save()
