@@ -12,9 +12,9 @@ from job_step import JobStep
 
 class ExtractRawDataJobStep(JobStep):
     """
-    Step 1: Extract raw data
+    Step 1: Extract bronze data
     - Read MovieLens CSV files with Spark
-    - Persist as Unity Catalog Delta tables: raw_movies, raw_ratings, raw_links
+    - Persist as Unity Catalog Delta tables: bronze_movies, bronze_ratings, bronze_links
 
     Config:
     -UC_CATALOG: Unity Catalog catalog name (default: hive_metastore)
@@ -25,14 +25,14 @@ class ExtractRawDataJobStep(JobStep):
 
     def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
         super().__init__(spark, config, dataframe_writer)
-        self._raw_movies_df: DataFrame | None = None
-        self._raw_ratings_df: DataFrame | None = None
-        self._raw_links_df: DataFrame | None = None
+        self._bronze_movies_df: DataFrame | None = None
+        self._bronze_ratings_df: DataFrame | None = None
+        self._bronze_links_df: DataFrame | None = None
 
     # ---------------------- step contract ----------------------
     def load(self) -> None:
         """
-        Initialize raw movies, raw ratings, raw links as DataFrames
+        Initialize bronze movies, bronze ratings, bronze links as DataFrames
         """
         data_path = self.config.string("RAW_DATA_PATH", "./data")
 
@@ -54,26 +54,26 @@ class ExtractRawDataJobStep(JobStep):
             T.StructField("tmdbId", T.IntegerType(), True),
         ])
 
-        self._raw_movies_df = (
-            self.spark.read.option("header", True).schema(movies_schema).csv(os.path.join(os.path.expanduser(data_path), "movies.csv"))
+        self._bronze_movies_df = (
+            self.spark.read.option("header", True).schema(movies_schema).csv(os.path.join(os.path.expanduser(data_path), "movies.csv")).withColumnRenamed("movieId", "movie_id")
         )
-        self._raw_ratings_df = (
-            self.spark.read.option("header", True).schema(ratings_schema).csv(os.path.join(os.path.expanduser(data_path), "ratings.csv"))
+        self._bronze_ratings_df = (
+            self.spark.read.option("header", True).schema(ratings_schema).csv(os.path.join(os.path.expanduser(data_path), "ratings.csv")).withColumnRenamed("movieId", "movie_id").withColumnRenamed("userId", "user_id")
         )
-        self._raw_links_df = (
-            self.spark.read.option("header", True).schema(links_schema).csv(os.path.join(os.path.expanduser(data_path), "links.csv"))
+        self._bronze_links_df = (
+            self.spark.read.option("header", True).schema(links_schema).csv(os.path.join(os.path.expanduser(data_path), "links.csv")).withColumnRenamed("movieId", "movie_id").withColumnRenamed("imdbId", "imdb_id").withColumnRenamed("tmdbId", "tmdb_id")
         )
 
     def process(self) -> None:
         # Minimal cleanup: ensure types are correct (Spark schema enforces types). Also trim strings.
-        assert self._raw_movies_df is not None
-        self._raw_movies_df = self._raw_movies_df.withColumn("title", F.trim(F.col("title"))).withColumn("genres", F.trim(F.col("genres")))
+        assert self._bronze_movies_df is not None
+        self._bronze_movies_df = self._bronze_movies_df.withColumn("title", F.trim(F.col("title"))).withColumn("genres", F.trim(F.col("genres")))
 
     def save(self) -> None:
-        assert self._raw_movies_df is not None and self._raw_ratings_df is not None and self._raw_links_df is not None
-        self.dataframe_writer.write(self._raw_movies_df, "raw_movies")
-        self.dataframe_writer.write(self._raw_ratings_df, "raw_ratings")
-        self.dataframe_writer.write(self._raw_links_df, "raw_links")
+        assert self._bronze_movies_df is not None and self._bronze_ratings_df is not None and self._bronze_links_df is not None
+        self.dataframe_writer.write(self._bronze_movies_df, "bronze_movies")
+        self.dataframe_writer.write(self._bronze_ratings_df, "bronze_ratings")
+        self.dataframe_writer.write(self._bronze_links_df, "bronze_links")
 
 
 @inject

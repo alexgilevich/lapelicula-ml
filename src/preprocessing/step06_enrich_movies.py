@@ -22,7 +22,7 @@ class EnrichMoviesJobStep(JobStep):
     """
     Step 8: Enrich movies (one-hot genres + external attributes)
     - One-hot encode movie genres
-    - Join with links (imdbId, tmdbId)
+    - Join with links (imdbId, tmdb_id)
     - Fetch and attach TMDB attributes (cached in UC table)
 
     Produces: movies_enriched
@@ -62,9 +62,9 @@ class EnrichMoviesJobStep(JobStep):
             return False
 
     def load(self) -> None:
-        self._movies_preprocessed_df = self.spark.table("movies_preprocessed")
-        self._links_df = self.spark.table("raw_links")
-        tmdb_tbl = "movies_tmdb_info"
+        self._movies_preprocessed_df = self.spark.table("silver_movies_preprocessed")
+        self._links_df = self.spark.table("bronze_links")
+        tmdb_tbl = "bronze_movies_tmdb_info"
         if self._table_exists(tmdb_tbl):
             self._movies_tmdb_info_df = self.spark.table(tmdb_tbl).to(self.enriched_movie_schema)
 
@@ -111,29 +111,29 @@ class EnrichMoviesJobStep(JobStep):
         assert self._movies_preprocessed_df is not None
         assert self._links_df is not None
 
-        movies_with_links = self._movies_preprocessed_df.join(self._links_df, on="movieId", how="left")
+        movies_with_links = self._movies_preprocessed_df.join(self._links_df, on="movie_id", how="left")
 
         # Prepare/cached TMDB attributes table
         tmdb_attr_df = self._movies_tmdb_info_df if self._movies_tmdb_info_df else self.spark.createDataFrame([], schema=self.enriched_movie_schema)
 
-        needed_ids_df = movies_with_links.select("tmdbId").where(F.col("tmdbId").isNotNull()).distinct()
-        have_ids_df = tmdb_attr_df.select(F.col("id").alias("tmdbId")).distinct()
-        missing_ids = needed_ids_df.join(have_ids_df, on="tmdbId", how="left_anti").select("tmdbId")
-        missing_ids_list = [int(r.tmdbId) for r in missing_ids.collect()]
+        needed_ids_df = movies_with_links.select("tmdb_id").where(F.col("tmdb_id").isNotNull()).distinct()
+        have_ids_df = tmdb_attr_df.select(F.col("id").alias("tmdb_id")).distinct()
+        missing_ids = needed_ids_df.join(have_ids_df, on="tmdb_id", how="left_anti").select("tmdb_id")
+        missing_ids_list = [int(r.tmdb_id) for r in missing_ids.collect()]
 
         missing_tmdb_info_df = self._fetch_missing_tmdb(missing_ids_list)
         self._movies_tmdb_info_df = tmdb_attr_df.unionByName(missing_tmdb_info_df)
 
-        # Join attributes (drop original title to mimic original behavior)
+        # Join attributes
         movies_no_title = movies_with_links.drop("title") if "title" in movies_with_links.columns else movies_with_links
-        enriched = movies_no_title.join(self._movies_tmdb_info_df, movies_with_links["tmdbId"] == self._movies_tmdb_info_df["id"], how="inner")
+        enriched = movies_no_title.join(self._movies_tmdb_info_df, movies_with_links["tmdb_id"] == self._movies_tmdb_info_df["id"], how="inner")
         self._movies_enriched_df = enriched
 
     def save(self) -> None:
         assert self._movies_enriched_df is not None
         assert self._movies_tmdb_info_df is not None
-        self.dataframe_writer.write(self._movies_tmdb_info_df, "movies_tmdb_info")
-        self.dataframe_writer.write(self._movies_enriched_df, "movies_enriched")
+        self.dataframe_writer.write(self._movies_tmdb_info_df, "silver_movies_tmdb_info")
+        self.dataframe_writer.write(self._movies_enriched_df, "silver_movies_enriched")
 
 
 @inject
