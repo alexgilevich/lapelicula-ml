@@ -60,7 +60,7 @@ class TrainModelJobStep(JobStep):
         assert self._training_movies_df is not None
         assert self._training_users_df is not None
         assert self._training_labels_df is not None
-
+        
         model_name = self.config.string("MLFLOW_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
         num_epochs = self.config.int("NUM_EPOCHS", DEFAULT_NUM_EPOCHS)
         num_model_layer_outputs = self.config.int("NUM_MODEL_LAYER_OUTPUTS", DEFAULT_NUM_MODEL_LAYER_OUTPUTS)

@@ -105,11 +105,9 @@ def get_spark(app_name: str, config: Config) -> SparkSession:
             .config("spark.python.worker.memory", "4g")
             .config("spark.driver.extraJavaOptions", "-Djava.security.manager=allow")
             .config("spark.executor.extraJavaOptions", "-Djava.security.manager=allow")
-            .config('spark.jars.packages', 'io.delta:delta-spark_2.13:4.0.1,io.unitycatalog:unitycatalog-spark_2.13:0.3.0')
-            #.config("spark.pyspark.python", sys.executable)
-            #.config("spark.pyspark.driver.python", sys.executable)
+            .config('spark.jars.packages', 'io.delta:delta-spark_4.1_2.13:4.3.0,io.unitycatalog:unitycatalog-spark_4.1_2.13:0.5.0')
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config("spark.sql.catalog.spark_catalog", "io.unitycatalog.spark.UCSingleCatalog") # spark_catalog is the system catalog created automatically by UC
+            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") # spark_catalog is the system catalog created automatically by UC
             .config(f"spark.sql.catalog.{catalog_name}", "io.unitycatalog.spark.UCSingleCatalog") # lapelicula is our own catalog used to read/write tables/models
             .config(f"spark.sql.catalog.{catalog_name}.uri", "http://localhost:8080")
             .config(f"spark.sql.catalog.{catalog_name}.token", "")

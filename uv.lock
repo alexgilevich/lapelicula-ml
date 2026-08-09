@@ -1199,7 +1199,7 @@ requires-dist = [
     { name = "pandas", specifier = "~=2.3.3" },
     { name = "pandas-stubs", specifier = "==2.3.2.250926" },
     { name = "pydantic", specifier = "~=2.12.4" },
-    { name = "pyspark", specifier = "==4.0.1" },
+    { name = "pyspark", specifier = "==4.1.2" },
     { name = "requests", specifier = "~=2.32.5" },
     { name = "scikit-learn", specifier = "==1.7.0" },
     { name = "scipy", specifier = "~=1.16.3" },
@@ -2137,12 +2137,12 @@ wheels = [
 
 [[package]]
 name = "pyspark"
-version = "4.0.1"
+version = "4.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "py4j" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/40/1414582f16c1d7b051c668c2e19c62d21a18bd181d944cb24f5ddbb2423f/pyspark-4.0.1.tar.gz", hash = "sha256:9d1f22d994f60369228397e3479003ffe2dd736ba79165003246ff7bd48e2c73", size = 434204896, upload-time = "2025-09-06T07:15:57.091Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/71/4dd20c69332a2a4bf7ece8a655c9da98e4bd9b6bcea235349c1a00399d57/pyspark-4.1.2.tar.gz", hash = "sha256:fa5d6159f700d0990a07f4f62df1b7449401dccee9cd7d5d6df8957530841602", size = 455428043, upload-time = "2026-05-21T14:49:21.785Z" }
 
 [[package]]
 name = "pytest"
