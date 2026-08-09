@@ -108,7 +108,8 @@ class TrainModelJobStep(JobStep):
             # log model
             model_input_signature = pd.DataFrame([{
                 "user_preferences": UserPreferences(action=0, animation=0, comedy=0, crime=5, documentary=5, drama=0, family=0, fantasy=0, film_noir=0, history=2, horror=3, music=0, mystery=4.5, romance=0, sci_fi=0, thriller=0, war=3, western=0).to_dict(),
-                "movies": all_movies_data[:1000]
+                "movies": all_movies_data[:1000],
+                "embeddings": embeddings[:1000]
             }])
             inference_params = { "limit": 1000 }
             signature = infer_signature(

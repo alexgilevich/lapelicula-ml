@@ -311,7 +311,7 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_scaled": [tf.keras.metrics.MeanSquaredError(name="tf_mse"), tf.keras.metrics.MeanAbsoluteError(name="tf_mae")],
                 "y_unscaled": []
             },
-            "run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
+            #"run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
         }
         rec_model.compile(**compile_args)
 
@@ -429,16 +429,17 @@ class Model(mlflow.pyfunc.PythonModel):
         assert isinstance(model_input, pd.DataFrame), "Input is not a Pandas DataFrame"
         #assert isinstance(model_input, dict), "Params is not a dictionary"
         
-        return [self._predict_single(request['user_preferences'], request['movies'], params) for _, request in model_input.iterrows()]
+        return [self._predict_single(request['user_preferences'], request['movies'], request['embeddings'], params) for _, request in model_input.iterrows()]
         
         
-    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[tuple[int, float]]:
+    def _predict_single(self, user_preferences: dict[str, float], movies_matrix: numpy.ndarray, embedding_matrix: numpy.ndarray, params: dict[str, int|float]) -> list[tuple[int, float]]:
         user_preferences = user_preferences or {}
         params = params or {}
         
         assert isinstance(user_preferences, dict)
         assert isinstance(params, dict)
         assert isinstance(movies_matrix, numpy.ndarray)
+        assert isinstance(embedding_matrix, numpy.ndarray)
         
         # parameters
         limit = params.get("limit", 50)
@@ -452,7 +453,7 @@ class Model(mlflow.pyfunc.PythonModel):
         user_matrix = np.tile(user_vector, (movies_matrix.shape[0], 1))
 
         # make a prediction
-        y_p = self._tf_model.predict([user_matrix, movies_matrix[:, 1:]], verbose=0)
+        y_p = self._tf_model.predict([user_matrix, movies_matrix[:, 1:], embedding_matrix], verbose=0)
 
         # take the unscaled y prediction 
         y_p_unscaled = y_p["y_unscaled"]
