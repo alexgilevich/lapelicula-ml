@@ -38,8 +38,8 @@ class PreprocessMoviesJobStep(JobStep):
 
     def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
         super().__init__(spark, config, dataframe_writer)
-        self._raw_movies_df: DataFrame | None = None
-        self._raw_ratings_df: DataFrame | None = None
+        self._bronze_movies_df: DataFrame | None = None
+        self._bronze_ratings_df: DataFrame | None = None
         self._movies_preprocessed_df: DataFrame | None = None
         self._movies_shortlist_df: DataFrame | None = None
 
@@ -51,11 +51,11 @@ class PreprocessMoviesJobStep(JobStep):
             return [45, 100]
 
     def load(self) -> None:
-        self._raw_movies_df = self.spark.table("raw_movies")
-        self._raw_ratings_df = self.spark.table("raw_ratings")
+        self._bronze_movies_df = self.spark.table("bronze_movies")
+        self._bronze_ratings_df = self.spark.table("bronze_ratings")
 
     def process(self) -> None:
-        assert self._raw_movies_df is not None and self._raw_ratings_df is not None
+        assert self._bronze_movies_df is not None and self._bronze_ratings_df is not None
         enable_extra_movie_features = self.config.bool("ENABLE_EXTRA_MOVIE_FEATURES", False)
         enable_weighted_average = self.config.bool("ENABLE_WEIGHTED_AVERAGE", False)
         genres_n_clusters = self._parse_clusters()
@@ -64,7 +64,7 @@ class PreprocessMoviesJobStep(JobStep):
         split_genres = F.split(F.col("genres"), "\\|")
         cleaned_genres = F.expr("filter(transform(genres_col, g -> case when g = 'Children' then 'Kids' else g end), g -> g not in ('(no genres listed)', 'IMAX'))")
         movies_df = (
-            self._raw_movies_df
+            self._bronze_movies_df
             .withColumn("genres_col", split_genres)
             .withColumn("genres", cleaned_genres)
             .drop("genres_col")
@@ -87,14 +87,14 @@ class PreprocessMoviesJobStep(JobStep):
         # rating_count, rating_avg from ratings
         # although these features are not used during training, it is convenient to have them for data interpretation purposes
         agg_df = (
-            self._raw_ratings_df.groupBy("movieId")
+            self._bronze_ratings_df.groupBy("movie_id")
             .agg(F.count(F.lit(1)).alias("rating_count"), F.avg("rating").alias("rating_avg"))
         )
-        movies_df = movies_df.join(agg_df, on="movieId", how="left")
+        movies_df = movies_df.join(agg_df, on="movie_id", how="left")
 
         # genre partitions via Pandas k-medoids using weighted Jaccard
         # Collect minimal columns to driver
-        pdf = movies_df.select("movieId", "genres").orderBy(F.col("movieId")).toPandas()
+        pdf = movies_df.select("movie_id", "genres").orderBy(F.col("movie_id")).toPandas()
         logger.info('Converting to Pandas dataframe to calculate medoids, shape = %s, features = %s', pdf.shape, pdf.columns.tolist())
 
         if not pdf.empty:
@@ -131,14 +131,21 @@ class PreprocessMoviesJobStep(JobStep):
         # Convert labels back to Spark and join
         labels_cols = [c for c in pdf.columns if c.startswith("genre_partition")]
         if labels_cols:
-            cols = ["movieId"] + genre_cols + labels_cols
+            cols = ["movie_id"] + genre_cols + labels_cols
             labels_pdf = pdf[cols]
             labels_sdf = self.spark.createDataFrame(labels_pdf)
-            movies_df = movies_df.join(labels_sdf, on="movieId", how="left")
+            movies_df = movies_df.join(labels_sdf, on="movie_id", how="left")
+            # Assemble one-hot encoded genres array in the order of genre_cols
+            movies_df = movies_df.withColumn(
+                "genres_encoded", F.array([F.col(c) for c in genre_cols])
+            )
         else:
             # If no labels, set -1
             for i, _ in enumerate(genres_n_clusters):
                 movies_df = movies_df.withColumn(f"genre_partition{i}", F.lit(-1))
+            movies_df = movies_df.withColumn(
+                "genres_encoded", F.array([F.lit(0).cast("int") for _ in genre_cols])
+            )
 
 
         if enable_weighted_average:
@@ -161,8 +168,8 @@ class PreprocessMoviesJobStep(JobStep):
 
     def save(self) -> None:
         assert self._movies_preprocessed_df is not None and self._movies_shortlist_df is not None
-        self.dataframe_writer.write(self._movies_preprocessed_df, "movies_preprocessed")
-        self.dataframe_writer.write(self._movies_shortlist_df, "movies_shortlist")
+        self.dataframe_writer.write(self._movies_preprocessed_df, "silver_movies_preprocessed")
+        self.dataframe_writer.write(self._movies_shortlist_df, "silver_movies_filtered")
 
 
 

@@ -37,7 +37,7 @@ class SplitTrainingDataJobStep(JobStep):
         self._training_labels_df: DataFrame | None = None
 
     def load(self) -> None:
-        self._training_base_df = self.spark.table("training_base").orderBy("row_id")
+        self._training_base_df = self.spark.table("silver_training_base").orderBy("row_id")
 
     def process(self) -> None:
         logger.info('Number of base rows = %d', self._training_base_df.count())
@@ -65,9 +65,9 @@ class SplitTrainingDataJobStep(JobStep):
 
     def save(self) -> None:
         assert self._training_movies_df is not None and self._training_users_df is not None and self._training_labels_df is not None
-        self.dataframe_writer.write(self._training_movies_df, "training_movies")
-        self.dataframe_writer.write(self._training_users_df, "training_users")
-        self.dataframe_writer.write(self._training_labels_df, "training_labels")
+        self.dataframe_writer.write(self._training_movies_df, "gold_training_movie")
+        self.dataframe_writer.write(self._training_users_df, "gold_training_user")
+        self.dataframe_writer.write(self._training_labels_df, "gold_training_label")
 
 @inject
 def run(

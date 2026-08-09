@@ -40,8 +40,8 @@ class BuildUserFeaturesJobStep(JobStep):
         self._movies_df: DataFrame | None = None
 
     def load(self) -> None:
-        self._ratings_df = self.spark.table("ratings_synthetic")
-        self._movies_df = self.spark.table("movies_shortlist")
+        self._ratings_df = self.spark.table("silver_ratings_synthetic")
+        self._movies_df = self.spark.table("silver_movies_filtered")
 
     def process(self) -> None:
         assert self._ratings_df is not None
@@ -52,8 +52,8 @@ class BuildUserFeaturesJobStep(JobStep):
 
         sdf = (
             self._ratings_df.alias("r").join(self._movies_df.alias("m"),
-                                             on=F.col("r.movieId") == F.col("m.movieId"), how="inner")
-            .drop(self._movies_df["movieId"])  # avoid duplicate movieId columns
+                                             on=F.col("r.movie_id") == F.col("m.movie_id"), how="inner")
+            .drop(self._movies_df["movie_id"])  # avoid duplicate movie_id columns
         )
 
         # Optionally extend genres with combined features
@@ -74,30 +74,30 @@ class BuildUserFeaturesJobStep(JobStep):
         sdf = sdf.withColumn("year", F.year(F.from_unixtime(F.col("timestamp"))))
 
         # Explode genres and compute per-user per-genre rating
-        exploded = sdf.select("userId", "genres", "rating", *( ["weight"] if "weight" in sdf.columns else [] )) \
+        exploded = sdf.select("user_id", "genres", "rating", *( ["weight"] if "weight" in sdf.columns else [] )) \
                      .withColumn("genre", F.explode("genres")).drop("genres")
 
         if enable_weighted and "weight" in exploded.columns:
-            avg_rating_by_user_genre_df = exploded.groupBy("userId", "genre").agg((F.sum(F.col("rating") * F.col("weight")) / F.sum(F.col("weight"))).alias("rating"))
+            avg_rating_by_user_genre_df = exploded.groupBy("user_id", "genre").agg((F.sum(F.col("rating") * F.col("weight")) / F.sum(F.col("weight"))).alias("rating"))
         else:
-            avg_rating_by_user_genre_df = exploded.groupBy("userId", "genre").agg(F.avg("rating").alias("rating"))
+            avg_rating_by_user_genre_df = exploded.groupBy("user_id", "genre").agg(F.avg("rating").alias("rating"))
 
         # Pivot to wide
-        users_features = avg_rating_by_user_genre_df.groupBy("userId").pivot("genre").agg(F.first("rating")).fillna(0.0)
+        users_features = avg_rating_by_user_genre_df.groupBy("user_id").pivot("genre").agg(F.first("rating")).fillna(0.0)
 
         if enable_extra_user:
-            high_counts = avg_rating_by_user_genre_df.where(F.col("rating") >= 4.5).groupBy("userId").count().withColumnRenamed("count", "high_rating_count")
-            low_counts = avg_rating_by_user_genre_df.where(F.col("rating") <= 2).groupBy("userId").count().withColumnRenamed("count", "low_rating_count")
-            users_features = users_features.join(high_counts, on="userId", how="left").join(low_counts, on="userId", how="left")
+            high_counts = avg_rating_by_user_genre_df.where(F.col("rating") >= 4.5).groupBy("user_id").count().withColumnRenamed("count", "high_rating_count")
+            low_counts = avg_rating_by_user_genre_df.where(F.col("rating") <= 2).groupBy("user_id").count().withColumnRenamed("count", "low_rating_count")
+            users_features = users_features.join(high_counts, on="user_id", how="left").join(low_counts, on="user_id", how="left")
             users_features = users_features.fillna({"high_rating_count": 0, "low_rating_count": 0})
 
-        # Ensure userId as first column (optional)
-        cols = ["userId"] + [c for c in users_features.columns if c != "userId"]
+        # Ensure user_id as first column (optional)
+        cols = ["user_id"] + [c for c in users_features.columns if c != "user_id"]
         self._users_with_features_df = users_features.select(*cols)
 
     def save(self) -> None:
         assert self._users_with_features_df is not None
-        self.dataframe_writer.write(self._users_with_features_df, "users_with_features")
+        self.dataframe_writer.write(self._users_with_features_df, "silver_users_with_features")
 
 
 @inject

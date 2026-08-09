@@ -37,8 +37,8 @@ class TrainingKerasModel(tf.keras.Model):
     @param base_model: The base Keras model that takes user and movie inputs and produces a predicted rating.
     @param all_movies: A numpy array containing all movies information (IDs, features), used for global negative sampling
     """
-    def __init__(self, base_model: tf.keras.Model, all_movies: np.ndarray, output_names: list[str]):
-        super().__init__()
+    def __init__(self, base_model: tf.keras.Model, all_movies: np.ndarray, output_names: list[str], **kwargs):
+        super().__init__(**kwargs)
         self.base_model = base_model
         self.all_movies = all_movies
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
@@ -49,7 +49,7 @@ class TrainingKerasModel(tf.keras.Model):
 
     def train_step(self, data):
         # extract what we pass into the fit function
-        (user_matrix, movie_matrix, movie_ids), y_true = data
+        (user_matrix, movie_matrix, embedding_matrix, movie_ids), y_true = data
 
         batch_size = tf.shape(movie_matrix)[0]
         num_movies = tf.shape(self.all_movies)[0]
@@ -81,9 +81,9 @@ class TrainingKerasModel(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             # positive scores
-            pos_scores = self.base_model([user_matrix, movie_matrix])['y_scaled']
+            pos_scores = self.base_model([user_matrix, movie_matrix, embedding_matrix])['y_scaled']
             # negative scores
-            neg_scores = self.base_model([user_matrix, neg_movies])['y_scaled']
+            neg_scores = self.base_model([user_matrix, neg_movies, embedding_matrix])['y_scaled']
 
             # MSE loss (real ratings)
             mse_loss = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - pos_scores), axis=-1)
@@ -107,10 +107,10 @@ class TrainingKerasModel(tf.keras.Model):
     
     def test_step(self, data):
         # extract what we pass into the fit function
-        (user_matrix, movie_matrix), y_true = data
+        (user_matrix, movie_matrix, embedding_matrix), y_true = data
         
         # Compute predictions
-        y_pred = self([user_matrix, movie_matrix], training=False)
+        y_pred = self([user_matrix, movie_matrix, embedding_matrix], training=False)
         
         mse = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - y_pred['y_scaled']))
         mae = tf.reduce_mean(tf.abs(y_true['y_scaled'] - y_pred['y_scaled']))
@@ -189,11 +189,12 @@ class Model(mlflow.pyfunc.PythonModel):
             "model_save_path": self.model_save_path
         }
     
-    def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, y_labels: numpy.ndarray, all_movies: numpy.ndarray) -> dict:
+    def train(self, user_train_data: numpy.ndarray, movie_train_data: numpy.ndarray, embedding_train_data: numpy.ndarray, y_labels: numpy.ndarray, all_movies: numpy.ndarray) -> dict:
         """
         Trains the model using the provided training data
         :param user_train_data: User training data
         :param movie_train_data: Movie training data
+        :param embedding_train_data: Movie description embeddings
         :param y_labels: Y-labels (ground truth)
         :param all_movies: Array containing all movies information (used for negative sampling)
         :return: Train metrics
@@ -222,12 +223,15 @@ class Model(mlflow.pyfunc.PythonModel):
         (
             movie_train_split,
             movie_test_split,
+            embedding_train_split,
+            embedding_test_split,
             user_train_split,
             user_test_split,
             y_train_split,
             y_test_split
         ) = train_test_split(
             movie_train_data,
+            embedding_train_data,
             user_train_data,
             y_labels,
             train_size=0.9,
@@ -244,41 +248,55 @@ class Model(mlflow.pyfunc.PythonModel):
         movie_train_data = movie_train_data[:, 1:] # skip movie ids
 
         # Neural Network architecture
-        user_network = tf.keras.models.Sequential([
+        
+
+
+
+        
+        # create the user input and point to the base network
+        user_input = tf.keras.layers.Input(shape=(user_train_split.shape[1],), name = 'user_input_layer')
+        user_seq = tf.keras.models.Sequential([
             user_scaler_layer,
             tf.keras.layers.Dense(units = 256, activation = 'relu'),
             tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
         ])
-        
-        movie_network = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(units = 256, activation = 'relu'),
-            tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
-        ])
-        
-        # create the user input and point to the base network
-        user_input_layer = tf.keras.layers.Input(shape=(user_train_split.shape[1],), name='user_input_layer')
-        user_network_output = user_network(user_input_layer)
-        user_network_output = L2Norm(axis=1)(user_network_output, name='user_l2_normalization_layer')
+        user_output = L2Norm(axis=1)(user_seq(user_input), name = 'user_l2_normalization_layer')
         
         
         # create the item input and point to the base network
-        movie_input_layer = tf.keras.layers.Input(shape=(movie_train_split.shape[1],), name='movie_input_layer')
-        movie_network_output = movie_network(movie_input_layer)
-        movie_network_output = L2Norm(axis=1)(movie_network_output, name='movie_l2_normalization_layer')
+        movie_cat_features_input = tf.keras.layers.Input(shape=(movie_train_split.shape[1],), name = 'movie_cat_features_input_layer')
+        movie_embedding_input = tf.keras.layers.Input(shape=(embedding_train_split.shape[1],), name = 'movie_embedding_input_layer')
+
+
+        movie_embedding_preprocessing = tf.keras.models.Sequential([
+            tf.keras.layers.Dense(units = 256, activation = 'relu'),
+            tf.keras.layers.Dense(units = 128, activation = 'relu')
+        ])
+
+        movie_embedding_preprocessing_output = movie_embedding_preprocessing(movie_embedding_input)
+        
+        movie_features_concatenation = tf.keras.layers.Concatenate(axis = -1, name = "movie_embedding_concatenate_layer")([movie_cat_features_input, movie_embedding_preprocessing_output])
+        movie_seq = tf.keras.models.Sequential([
+            tf.keras.layers.Dense(units = 256, activation = 'relu'),
+            tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
+        ])
+        movie_network_output = movie_seq(movie_features_concatenation)
+        movie_network_output = L2Norm(axis=1)(movie_network_output, name = 'movie_l2_normalization_layer')
         
         # compute the dot product of the two vectors: the output user vector and the output movie vector
-        dot_product_output_layer = tf.keras.layers.Dot(axes=1, name="dot_product_layer")([user_network_output, movie_network_output])
+        dot_product_output = tf.keras.layers.Dot(axes=1, name="dot_product_layer")([user_output, movie_network_output])
 
         # Inverse output scaling layer
-        unscaled_output = y_unscaler(dot_product_output_layer)
+        unscaled_output = y_unscaler(dot_product_output)
         
         # specify the inputs and output of the model
         model = tf.keras.Model(
-            inputs=[user_input_layer, movie_input_layer], 
+            inputs=[user_input, movie_cat_features_input, movie_embedding_input], 
             outputs={
-                "y_scaled": dot_product_output_layer,
+                "y_scaled": dot_product_output,
                 "y_unscaled": unscaled_output
-            })
+            }
+        )
 
         rec_model = TrainingKerasModel(model, all_movies, ['y_scaled', 'y_unscaled'])
         
@@ -293,12 +311,12 @@ class Model(mlflow.pyfunc.PythonModel):
                 "y_scaled": [tf.keras.metrics.MeanSquaredError(name="tf_mse"), tf.keras.metrics.MeanAbsoluteError(name="tf_mae")],
                 "y_unscaled": []
             },
-            #"run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
+            "run_eagerly": True #uncomment for eager execution (slower but allows for step-by-step debugging and printing of intermediate values in the train_step)
         }
         rec_model.compile(**compile_args)
 
         rec_model.fit(
-            [user_train_split, movie_train_split, movie_ids_train_split],
+            [user_train_split, movie_train_split, embedding_train_split, movie_ids_train_split],
             {"y_scaled": y_scaler(y_train_split).numpy()}, 
             epochs=self.num_epochs,
             verbose=self.verbose_level,
@@ -308,6 +326,7 @@ class Model(mlflow.pyfunc.PythonModel):
         metrics = self._evaluate_trained_model(
             rec_model, 
             movie_test_split, 
+            embedding_test_split,
             user_test_split, 
             user_ids_test_split, 
             {
@@ -323,11 +342,12 @@ class Model(mlflow.pyfunc.PythonModel):
         
         return metrics
 
-    def _evaluate_trained_model(self, model, movie_test_split, user_test_split, user_ids_test_split, y_test_split):
+    def _evaluate_trained_model(self, model, movie_test_split, embedding_test_split, user_test_split, user_ids_test_split, y_test_split):
         """
         Evaluate the trained model using MSE, MAE and NDCG metrics. The NDCG is computed offline by generating predictions for the test set and comparing them to the true ratings, grouped by user.
         :param model: The trained Keras model to evaluate
         :param movie_test_split: Movie features for the test set
+        :param embedding_test_split: Movie embeddings for the test set
         :param user_test_split: User features for the test set
         :param user_ids_test_split: User IDs for the test set (used for NDCG calculation)
         :param y_test_split: True ratings for the test set (unscaled!)
@@ -335,13 +355,13 @@ class Model(mlflow.pyfunc.PythonModel):
         """
         
         metrics = model.evaluate(
-            [user_test_split, movie_test_split],
+            [user_test_split, movie_test_split, embedding_test_split],
             y_test_split,
             return_dict=True,
             verbose=2
         )
         metrics = {k: v.numpy() for k, v in metrics.items()}
-        preds = model.predict([user_test_split, movie_test_split])
+        preds = model.predict([user_test_split, movie_test_split, embedding_test_split])
         ndcg = self._compute_ndcg_offline(
             y_test_split,
             preds,
