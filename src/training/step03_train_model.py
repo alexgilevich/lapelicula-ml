@@ -51,10 +51,10 @@ class TrainModelJobStep(JobStep):
         """
         Initialize dataframes for training
         """
-        self._training_movies_df = self.spark.table("training_movies")
-        self._training_users_df = self.spark.table("training_users")
-        self._training_labels_df = self.spark.table("training_labels")
-        self._movies_preprocessed_df = self.spark.table("movies_preprocessed")
+        self._training_movies_df = self.spark.table("gold_training_movie")
+        self._training_users_df = self.spark.table("gold_training_user")
+        self._training_labels_df = self.spark.table("gold_training_label")
+        self._gold_movies_df = self.spark.table("gold_movie")
 
     def process(self) -> None:
         assert self._training_movies_df is not None
@@ -68,24 +68,34 @@ class TrainModelJobStep(JobStep):
 
 
         self._model_manager.start_experiment()
+
+        MOVIE_COLUMNS = ['movie_id', 
+                        'anger', 'contempt', 'disgust', 'fear', 'frustration', 'gratitude', 'joy', 'love', 'neutral', 'sadness', 'surprise', 
+                        'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western', 
+                        'description_embedding',
+                        'adult']
         
-        movie_train_data_pdf = self._training_movies_df.orderBy(F.col('row_id')).toPandas()
-        user_train_data_pdf = self._training_users_df.orderBy(F.col('row_id')).toPandas()
-        y_pdf = self._training_labels_df.orderBy(F.col('row_id')).toPandas()
+        movie_with_embs_train_data_pdf = self._training_movies_df.select('row_id', *MOVIE_COLUMNS).orderBy(F.col('row_id')).toPandas()
+        movie_train_data_pdf = movie_with_embs_train_data_pdf.drop(columns=['row_id', 'title', 'year', 'description_embedding'], errors="ignore")
+        user_train_data_pdf = self._training_users_df.orderBy(F.col('row_id')).toPandas().drop(columns=['row_id'], errors="ignore")
+        y_pdf = self._training_labels_df.orderBy(F.col('row_id')).toPandas().drop(columns=['row_id'])
+        all_movies_pdf = self._gold_movies_df.select(*MOVIE_COLUMNS).drop('description_embedding').toPandas()
+
         model = Model(num_outputs = num_model_layer_outputs, num_epochs=num_epochs, verbose_level=2)
 
         with mlflow.start_run() as run:
-            logger.info("User training initial df data shape: %s, columns: %s", movie_train_data_pdf.shape, movie_train_data_pdf.columns)
-            logger.info("Movie training initial df data shape: %s, columns: %s", user_train_data_pdf.shape, user_train_data_pdf.columns)
-            logger.info("Label training initial df data shape: %s, columns: %s", y_pdf.shape, y_pdf.columns)
             
+            logger.info("Movie training initial dataframe data shape: %s, columns: %s", movie_with_embs_train_data_pdf.shape, movie_with_embs_train_data_pdf.columns)
+            logger.info("Movie training cut down dataframe data shape: %s, columns: %s", movie_train_data_pdf.shape, movie_train_data_pdf.columns)
+            logger.info("User training initial dataframe data shape: %s, columns: %s", user_train_data_pdf.shape, user_train_data_pdf.columns)
+            logger.info("Label training initial dataframe data shape: %s, columns: %s", y_pdf.shape, y_pdf.columns)
             
-            movie_train_data = movie_train_data_pdf.drop(columns=['row_id', 'title'], errors="ignore").to_numpy()
-            user_train_data  = user_train_data_pdf.drop(columns=['row_id'], errors="ignore").to_numpy()
-            y_labels         = y_pdf.drop(columns=['row_id']).to_numpy()
-            all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
-
-            metrics = model.train(user_train_data, movie_train_data, y_labels, all_movies_data)
+            movie_train_data = movie_train_data_pdf.to_numpy(dtype=np.float32)
+            user_train_data  = user_train_data_pdf.to_numpy(dtype=np.float32)
+            y_labels         = y_pdf.to_numpy(dtype=np.float32)
+            all_movies_data = all_movies_pdf.to_numpy(dtype=np.float32)
+            embeddings = np.stack(movie_with_embs_train_data_pdf['description_embedding'].apply(lambda x: np.array(x)).values)
+            metrics = model.train(user_train_data, movie_train_data, embeddings, y_labels, all_movies_data)
 
             # log params
             mlflow.log_params(model.get_params())

@@ -30,7 +30,8 @@ task_files = [
     "step04_build_user_features",
     "step05_oversample_ratings",
     "step06_enrich_movies",
-    "step07_sync_to_dynamodb"
+    "step07_generate_embeddings",
+    "step08_sync_to_dynamodb"
 ]
 tasks = [
     Task(

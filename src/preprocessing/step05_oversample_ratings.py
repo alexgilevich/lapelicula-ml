@@ -36,8 +36,8 @@ class OversampleRatingsJobStep(JobStep):
         self._movies_df: DataFrame | None = None
 
     def load(self) -> None:
-        self._ratings_df = self.spark.table("ratings_synthetic")
-        self._movies_df = self.spark.table("movies_shortlist")
+        self._ratings_df = self.spark.table("silver_ratings_synthetic")
+        self._movies_df = self.spark.table("silver_movies_filtered")
 
     def _oversample_by_genre(self, ratings_df: DataFrame, seed: int) -> DataFrame:
         # explode genres
@@ -113,8 +113,8 @@ class OversampleRatingsJobStep(JobStep):
 
         ratings_with_movies_df = (
             self._ratings_df.alias("r").join(self._movies_df.alias("m"),
-                                             on=F.col("r.movieId") == F.col("m.movieId"), how="inner")
-            .drop(self._movies_df["movieId"])  # avoid duplicate movieId columns
+                                             on=F.col("r.movie_id") == F.col("m.movie_id"), how="inner")
+            .drop(self._movies_df["movie_id"])  # avoid duplicate movie_id columns
         )
 
         resampled_ratings_df = self._oversample_by_genre(ratings_with_movies_df, seed)
@@ -125,7 +125,7 @@ class OversampleRatingsJobStep(JobStep):
     def save(self) -> None:
         assert self._ratings_oversampled_df is not None
         assert self._movies_df is not None
-        self.dataframe_writer.write(self._ratings_oversampled_df, "ratings_oversampled")
+        self.dataframe_writer.write(self._ratings_oversampled_df, "silver_ratings_oversampled")
 
 
 @inject

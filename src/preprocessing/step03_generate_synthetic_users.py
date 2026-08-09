@@ -16,8 +16,8 @@ class GenerateSyntheticUsersJobStep(JobStep):
     """
     Step 4: Generate synthetic users
     - For each genre partition column (genre_partition0, genre_partition1, ...),
-      keep users that have ratings in more than one partition and remap their userId to
-      100_000_000 * (i + 1) + userId * 1000 + partition_value
+      keep users that have ratings in more than one partition and remap their user_id to
+      100_000_000 * (i + 1) + user_id * 1000 + partition_value
     - Concatenate such frames across partitions
 
     Input: ratings_with_movies
@@ -43,16 +43,16 @@ class GenerateSyntheticUsersJobStep(JobStep):
             return [45, 100]
 
     def load(self) -> None:
-        self._ratings_df = self.spark.table("raw_ratings")
-        self._movies_df = self.spark.table("movies_shortlist")
+        self._ratings_df = self.spark.table("bronze_ratings")
+        self._movies_df = self.spark.table("silver_movies_filtered")
 
     def process(self) -> None:
         assert self._ratings_df is not None
         assert self._movies_df is not None
         ratings_with_movies_df = (
             self._ratings_df.alias("r").join(self._movies_df.alias("m"),
-                                             on=F.col("r.movieId") == F.col("m.movieId"), how="inner")
-            .drop(self._movies_df["movieId"])  # avoid duplicate movieId columns
+                                             on=F.col("r.movie_id") == F.col("m.movie_id"), how="inner")
+            .drop(self._movies_df["movie_id"])  # avoid duplicate movie_id columns
         )
         
         genres_n_clusters = self._parse_clusters()
@@ -68,14 +68,14 @@ class GenerateSyntheticUsersJobStep(JobStep):
             # there still might be cases when partitions were not assigned because of too few samples in the centroids
             sdf = ratings_with_movies_df.where(F.col(partition_col) > -1)
             # users with >1 distinct partition
-            user_part_counts = sdf.groupBy("userId").agg(F.countDistinct(F.col(partition_col)).alias("part_cnt"))
+            user_part_counts = sdf.groupBy("user_id").agg(F.countDistinct(F.col(partition_col)).alias("part_cnt"))
             # we need to break apart only users with multiple partitions because users with 1 partition already have "focused" interest around one specific type of movies
-            users_multi = user_part_counts.where(F.col("part_cnt") > 1).select("userId")
-            sdf = sdf.join(users_multi, on="userId", how="inner")
+            users_multi = user_part_counts.where(F.col("part_cnt") > 1).select("user_id")
+            sdf = sdf.join(users_multi, on="user_id", how="inner")
             # new synthetic user id generation
             sdf = sdf.withColumn(
-                "userId",
-                (F.lit(100_000_000) * (F.lit(i + 1)) + F.col("userId") * F.lit(1000) + F.col(partition_col)).cast(T.LongType())
+                "user_id",
+                (F.lit(100_000_000) * (F.lit(i + 1)) + F.col("user_id") * F.lit(1000) + F.col(partition_col)).cast(T.LongType())
             )
             if final_df is None:
                 final_df = sdf
@@ -86,7 +86,7 @@ class GenerateSyntheticUsersJobStep(JobStep):
         
     def save(self) -> None:
         assert self._ratings_df is not None
-        self.dataframe_writer.write(self._ratings_df, "ratings_synthetic")
+        self.dataframe_writer.write(self._ratings_df, "silver_ratings_synthetic")
 
 
 @inject
