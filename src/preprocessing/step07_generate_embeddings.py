@@ -35,7 +35,7 @@ class GenerateEmbeddingsJobStep(JobStep):
         self._movies_df: DataFrame | None = None
 
     def load(self) -> None:
-        self._movies_df = self.spark.table("movies_enriched")
+        self._movies_df = self.spark.table("silver_movies_enriched")
         self._movies_embeddings_df: DataFrame | None = None
         self.spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "250")
 
@@ -77,7 +77,7 @@ class GenerateEmbeddingsJobStep(JobStep):
             logger.info(f"Generated embeddings for {len(emdeddings)} texts")
             return pd.Series(emdeddings)
         
-        self._movies_embeddings_df = self._movies_df.withColumn("description_embedding", generate_embeddings(F.col("description"))).select("movie_id", "description_embedding")
+        self._movies_embeddings_df = self._movies_df.withColumn("description_embedding", generate_embeddings(F.col("combined_description"))).select("movie_id", "description_embedding")
         self._movies_embeddings_df.show(5)
 
         

@@ -52,7 +52,7 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
         """
         Initialize dataframes for training
         """
-        self._movies_preprocessed_df = self.spark.table("movies_preprocessed").withColumnRenamed("movieId", "movie_id")
+        self._gold_movies_df = self.spark.table("gold_movie")
 
     def process(self) -> None:
         model_name = self.config.string("MLFLOW_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
@@ -60,7 +60,16 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
         full_local_model_save_path = os.path.join(local_model_save_path, model_name)
         
         inference_params = { "limit": 3000 }
-        all_movies_data = self._movies_preprocessed_df.toPandas().drop(columns=['row_id', 'title', 'genres', 'year', 'rating_count', 'rating_avg', 'genre_partition0', 'genre_partition1'], errors="ignore").to_numpy()
+
+        MOVIE_COLUMNS = ['movie_id', 
+                                "anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust", 
+                                'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western', 
+                                'description_embedding',
+                                'adult']
+        all_movies_with_embs_pdf = self._gold_movies_df.select(*MOVIE_COLUMNS).toPandas()
+        all_movies_without_embs_pdf = all_movies_with_embs_pdf.drop(columns=['description_embedding'])
+        all_movies_without_embs_data = all_movies_without_embs_pdf.to_numpy(dtype=np.float32)
+        embeddings = np.stack(all_movies_with_embs_pdf['description_embedding'].apply(lambda x: np.array(x)).values)
         
         model = mlflow.pyfunc.load_model(full_local_model_save_path)
         examples = [
@@ -76,10 +85,12 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
         ]
         
         for i, example in enumerate(examples):
-            print(f"Predicting for user ###{i + 1}: ", example.to_dict()) 
+            sorted_dict = { k: v for k, v in sorted(example.to_dict().items(), key = lambda item: -item[1]) }
+            print(f"Predicting for user ###{i + 1}: ", sorted_dict) 
             input = pd.DataFrame([{
-                "user_preferences": example.to_dict(),
-                "movies": all_movies_data
+                "user_preferences": sorted_dict,
+                "movies": all_movies_without_embs_data,
+                "embeddings": embeddings
             }])
             predictions = model.predict(input, inference_params)
             #logger.info("loaded: %s", predictions)
@@ -88,7 +99,7 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
                 StructField(name="movie_id", dataType=IntegerType(), nullable=True),
                 StructField(name="rating", dataType=StringType(), nullable=True)
             ]))
-            recommendations_df.join(self._movies_preprocessed_df, 'movie_id', how='inner').withColumn('rn', F.expr('row_number() over(order by rating desc)')).show(1000,  truncate = False)
+            recommendations_df.join(self._gold_movies_df, 'movie_id', how='inner').withColumn('rn', F.expr('row_number() over(order by rating desc)')).select('movie_id', 'rating', 'title', 'genres', 'year', 'rating_count', 'top_sentiments', 'vote_average').show(1000,  truncate = False)
             print("\n\n\n\n")
         #logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
 
