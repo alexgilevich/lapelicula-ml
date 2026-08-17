@@ -48,7 +48,7 @@ class GenerateTrainingDataJobStep(JobStep):
                            "adult",
                            "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Film-Noir", "Horror", "Kids", "Musical", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western", 
                            "description_embedding", 
-                           "anger", "contempt", "disgust", "fear", "frustration", "gratitude", "joy", "love", "neutral", "sadness", "surprise"]
+                           "anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust"]
         
         movies_slim_df = self._gold_movies_df.select(*movie_cols_keep)
         movie_col_names_keep = [(c.name() if isinstance(c, tuple) else str(c)) for c in movie_cols_keep]
