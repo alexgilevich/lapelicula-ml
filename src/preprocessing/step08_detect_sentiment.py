@@ -33,7 +33,7 @@ class DetectMovieSentimentJobStep(JobStep):
         self._movies_df: DataFrame | None = None
 
     def load(self) -> None:
-        self._movies_df = self.spark.table("movies_enriched")
+        self._movies_df = self.spark.table("silver_movies_enriched")
         self._movies_embeddings_df: DataFrame | None = None
         self.spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "250")
 
@@ -41,27 +41,26 @@ class DetectMovieSentimentJobStep(JobStep):
     def process(self) -> None:
         assert self._movies_df is not None
 
-        model_name = "tabularisai/multilingual-emotion-classification"
+        model_name = "ayoubkirouane/BERT-Emotions-Classifier"
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForSequenceClassification.from_pretrained(model_name)
         model.eval()
 
-        LABELS = ["anger", "contempt", "disgust", "fear", "frustration",
-                "gratitude", "joy", "love", "neutral", "sadness", "surprise"]
+        LABELS = ['anger', 'anticipation', 'disgust', 'fear', 'joy', 'love', 'optimism', 'pessimism', 'sadness', 'surprise', 'trust']
 
         @pandas_udf(T.StructType([T.StructField(label, T.FloatType()) for label in LABELS] + [T.StructField("top_sentiments", T.ArrayType(T.StringType()))]))
         def predict_sentiments(raw_texts: pd.Series) -> pd.DataFrame:
             logger.info(f"Detecting sentiments for {len(raw_texts)} texts")
             with torch.no_grad():
                 inputs = tokenizer(raw_texts.tolist(), return_tensors="pt", truncation=True,
-                                padding=True, max_length=192)
+                                padding=True, max_length=384)
                 probs_for_raw_texts = torch.sigmoid(model(**inputs).logits).cpu().numpy()
                 results = []
                 for row in probs_for_raw_texts:
                     # we are going to need sentiments for all labels for model training and evaluation
                     sentiments = [float(row[i]) for i in range(len(LABELS))]
                     # we are going to need top sentiments for prefiltering
-                    top_sentiments = [(LABELS[i], float(row[i])) for i in range(len(LABELS)) if row[i] >= 0.5]
+                    top_sentiments = [(LABELS[i], float(row[i])) for i in range(len(LABELS)) if row[i] >= 0.25]
                     top_sentiments.sort(key=lambda x: -x[1])
                     top_sentiments_labels = [top_sentiments[i][0] for i in range(0, len(top_sentiments))] or ["neutral"]
                     results.append(sentiments + [top_sentiments_labels])
@@ -69,7 +68,7 @@ class DetectMovieSentimentJobStep(JobStep):
             logger.info(f"Detected sentiments for {len(results)} texts")
             return pd.DataFrame(data=results, columns=LABELS + ["top_sentiments"]) 
         
-        self._movies_embeddings_df = self._movies_df.withColumn("_sentiment", predict_sentiments(F.col("description"))).select("movie_id", F.col("_sentiment.*"))
+        self._movies_embeddings_df = self._movies_df.withColumn("_sentiment", predict_sentiments(F.col("combined_description"))).select("movie_id", F.col("_sentiment.*"))
         
 
     def save(self) -> None:

@@ -64,7 +64,7 @@ class EnrichMoviesJobStep(JobStep):
     def load(self) -> None:
         self._movies_preprocessed_df = self.spark.table("silver_movies_preprocessed")
         self._links_df = self.spark.table("bronze_links")
-        tmdb_tbl = "bronze_movies_tmdb_info"
+        tmdb_tbl = "silver_movies_tmdb_info"
         if self._table_exists(tmdb_tbl):
             self._movies_tmdb_info_df = self.spark.table(tmdb_tbl).to(self.enriched_movie_schema)
 
@@ -126,13 +126,22 @@ class EnrichMoviesJobStep(JobStep):
 
         # Join attributes
         movies_no_title = movies_with_links.drop("title") if "title" in movies_with_links.columns else movies_with_links
-        enriched = movies_no_title.join(self._movies_tmdb_info_df, movies_with_links["tmdb_id"] == self._movies_tmdb_info_df["id"], how="inner")
+        enriched = (movies_no_title.join(self._movies_tmdb_info_df, movies_with_links["tmdb_id"] == self._movies_tmdb_info_df["id"], how="inner")
+            .withColumn("combined_description", 
+                        F.concat_ws(
+                            "\n", 
+                            F.concat(F.lit("Title: "), F.col("title")), 
+                            F.concat(F.lit("Tag line: "), F.coalesce(F.col("tagline"), F.lit(""))), 
+                            F.concat(F.lit("Genres: "), F.array_join(F.col("genres"), ", ")), 
+                            F.concat(F.lit("\nDescription: "), F.col("description"))))
+        )
+        
         self._movies_enriched_df = enriched
 
     def save(self) -> None:
         assert self._movies_enriched_df is not None
         assert self._movies_tmdb_info_df is not None
-        self.dataframe_writer.write(self._movies_tmdb_info_df, "silver_movies_tmdb_info")
+        #self.dataframe_writer.write(self._movies_tmdb_info_df, "silver_movies_tmdb_info")
         self.dataframe_writer.write(self._movies_enriched_df, "silver_movies_enriched")
 
 

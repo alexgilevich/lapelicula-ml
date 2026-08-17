@@ -70,7 +70,7 @@ class TrainModelJobStep(JobStep):
         self._model_manager.start_experiment()
 
         MOVIE_COLUMNS = ['movie_id', 
-                        'anger', 'contempt', 'disgust', 'fear', 'frustration', 'gratitude', 'joy', 'love', 'neutral', 'sadness', 'surprise', 
+                        "anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust", 
                         'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western', 
                         'description_embedding',
                         'adult']
