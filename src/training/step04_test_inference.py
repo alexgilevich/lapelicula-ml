@@ -82,6 +82,11 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
             UserPreferences(comedy = 4.5,  romance = 4.5 ),
             UserPreferences(war=5),
             UserPreferences(western=5),
+            UserPreferences(kids=5),
+            UserPreferences(horror=5),
+            UserPreferences(thriller=5),
+            UserPreferences(drama=5),
+            UserPreferences(film_noir=5),
         ]
         
         for i, example in enumerate(examples):
@@ -99,7 +104,12 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
                 StructField(name="movie_id", dataType=IntegerType(), nullable=True),
                 StructField(name="rating", dataType=StringType(), nullable=True)
             ]))
-            recommendations_df.join(self._gold_movies_df, 'movie_id', how='inner').withColumn('rn', F.expr('row_number() over(order by rating desc)')).select('movie_id', 'rating', 'title', 'genres', 'year', 'rating_count', 'top_sentiments', 'vote_average').show(1000,  truncate = False)
+            recommendations_df\
+                .join(self._gold_movies_df, 'movie_id', how='inner')\
+                .withColumn('rn', F.expr('row_number() over(order by rating desc)'))\
+                .select('movie_id', 'rating', 'title', 'genres', 'year', 'rating_count', 'top_sentiments', 'vote_average')\
+                .show(150,  truncate = False)
+            
             print("\n\n\n\n")
         #logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
 

@@ -54,49 +54,74 @@ class TrainingKerasModel(tf.keras.Model):
         batch_size = tf.shape(movie_matrix)[0]
         num_movies = tf.shape(self.all_movies)[0]
 
-        # global negative sampling
+        # Build per-user mask of invalid negative candidates:
+        # Exclude movies whose genres match any genre the user likes (avg rating >= 3).
+        num_genres = 18
+        user_genres = user_matrix[:, -num_genres:]  # batch x 18, values in [0, 5]
+        liked_genre_mask = tf.cast(user_genres >= 3.0, dtype=tf.float32)  # batch x 18
+
+        all_movie_genres = self.all_movies[:, 12:12 + num_genres]  # num_movies x 18
+        # invalid_negatives[i, j] = True if movie j shares any liked genre with user i
+        invalid_mask = tf.matmul(liked_genre_mask, tf.transpose(all_movie_genres)) > 0.0  # batch x num_movies
+
+        num_negs_per_pos = 5
+        total_negs = batch_size * num_negs_per_pos
+
+        # Repeat each positive row num_negs_per_pos times so we can sample and compare element-wise
+        movie_ids_expanded = tf.repeat(movie_ids, num_negs_per_pos)  # (B*N,)
+        invalid_mask_expanded = tf.repeat(invalid_mask, num_negs_per_pos, axis=0)  # (B*N, num_movies)
+
+        # global negative sampling with rejection of invalid candidates
         neg_indices = tf.random.uniform(
-            shape=(batch_size,),
+            shape=(total_negs,),
             minval=0,
             maxval=num_movies,
             dtype=tf.int32
         )
 
-        # avoid sampling the same movie for the same user in the same batch (collision), resample if collision occurs (up to 2 attempts)
-        for _ in range(2):
+        # Rejection sampling: keep resampling invalid indices (up to 10 attempts)
+        for _ in range(10):
             neg_movies = tf.gather(self.all_movies, neg_indices)
-            collision_mask = tf.equal(neg_movies[:, 0], movie_ids)
+            collision_mask = tf.equal(neg_movies[:, 0], movie_ids_expanded)  # (B*N,) element-wise
+            row_idx = tf.range(total_negs)
+            genre_invalid_mask = tf.gather_nd(invalid_mask_expanded, tf.stack([row_idx, neg_indices], axis=1))  # (B*N,)
 
+            invalid = tf.logical_or(collision_mask, genre_invalid_mask)
             resample_indices = tf.random.uniform(
-                shape=(batch_size,),
+                shape=(total_negs,),
                 minval=0,
                 maxval=num_movies,
                 dtype=tf.int32
             )
+            neg_indices = tf.where(invalid, resample_indices, neg_indices)
 
-            neg_indices = tf.where(collision_mask, resample_indices, neg_indices)
-
-        # final negative movies after resampling
-        neg_movies = tf.gather(self.all_movies, neg_indices)[:, 1:] # skip movie ids, keep only features for training
+        # final negative movies after resampling: (B*N, features)
+        neg_movies = tf.gather(self.all_movies, neg_indices)[:, 1:]
 
         with tf.GradientTape() as tape:
-            # positive scores
+            # positive scores: (B,)
             pos_scores = self.base_model([user_matrix, movie_matrix, embedding_matrix])['y_scaled']
-            # negative scores
-            neg_scores = self.base_model([user_matrix, neg_movies, embedding_matrix])['y_scaled']
+
+            # repeat user and embedding rows to match the expanded batch for negatives: (B*N, features)
+            user_expanded = tf.repeat(user_matrix, num_negs_per_pos, axis=0)
+            embedding_expanded = tf.repeat(embedding_matrix, num_negs_per_pos, axis=0)
+
+            # negative scores: (B*N,)
+            neg_scores = self.base_model([user_expanded, neg_movies, embedding_expanded])['y_scaled']
 
             # MSE loss (real ratings)
             mse_loss = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - pos_scores), axis=-1)
 
-            # ranking loss
+            # ranking loss: reshape neg scores to (B, N) for per-positive comparison
+            neg_scores_reshaped = tf.reshape(neg_scores, [batch_size, num_negs_per_pos])
             rank_loss = -tf.reduce_mean(
-                tf.math.log(tf.sigmoid(pos_scores - neg_scores) + 1e-8), 
-                axis=-1
+                tf.math.log(tf.sigmoid(pos_scores[:, None] - neg_scores_reshaped) + 1e-8),
+                axis=[-1, -2]
             )
 
             # combined loss
-            total_loss = mse_loss + 0.2 * rank_loss
-            
+            total_loss = mse_loss + 1.0 * rank_loss
+
         grads = tape.gradient(total_loss, self.base_model.trainable_variables)
 
         self.optimizer.apply_gradients(
@@ -127,12 +152,12 @@ class TrainingKerasModel(tf.keras.Model):
     
     def compute_metrics(self, x, y, y_pred, mse_loss, rank_loss, total_loss):
         metric_results = super().compute_metrics(x, y, y_pred)
-        
+
         # update built-in metrics
         self.total_loss_tracker.update_state(total_loss)
         self.mse_tracker.update_state(mse_loss)
         self.rank_tracker.update_state(rank_loss)
-        
+
         # compute and return a dictionary of metrics
         return {
             **{k: v for k, v in metric_results.items() if k != "loss"},  # remove the default loss metric since we compute our own combined loss
@@ -140,7 +165,7 @@ class TrainingKerasModel(tf.keras.Model):
             self.mse_tracker.name: self.mse_tracker.result(),
             self.rank_tracker.name: self.rank_tracker.result()
         }
-    
+
     @property
     def metrics(self):
         # We list our `Metric` objects here so that `reset_states()` can be
@@ -240,12 +265,16 @@ class Model(mlflow.pyfunc.PythonModel):
         )
 
         # skip movie ids, save movie ids separately for training (negative sampling)
-        movie_train_split, movie_ids_train_split, movie_test_split = movie_train_split[:, 1:], movie_train_split[:, 0], movie_test_split[:, 1:] 
-        # skip user ids for training, save user ids separately for evaluation (NDCG calculation) 
-        user_train_split, user_test_split, user_ids_test_split = user_train_split[:, 1:], user_test_split[:, 1:], user_test_split[:, 0] 
-        
+        movie_train_split, movie_ids_train_split, movie_test_split = movie_train_split[:, 1:], movie_train_split[:, 0], movie_test_split[:, 1:]
+        # skip user ids for training, save user ids separately for evaluation (NDCG calculation)
+        user_train_split, user_test_split, user_ids_test_split = user_train_split[:, 1:], user_test_split[:, 1:], user_test_split[:, 0]
+
         # skip user ids
         movie_train_data = movie_train_data[:, 1:] # skip movie ids
+
+        # Scale movie features (analogous to user scaling) so they're on the same scale as embeddings before concatenation
+        movie_scaler_layer = tf.keras.layers.Normalization(axis=-1)
+        movie_scaler_layer.adapt(movie_train_split)
 
         # Neural Network architecture
         
@@ -269,22 +298,30 @@ class Model(mlflow.pyfunc.PythonModel):
 
         
         movie_embedding_preprocessing = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(units = 256, activation = 'relu'),
-            tf.keras.layers.Dense(units = 128, activation = 'relu'),
+            tf.keras.layers.Dense(units = 128, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
+            tf.keras.layers.Dropout(0.3),
             tf.keras.layers.Dense(units = 16, activation = 'relu'),
+            tf.keras.layers.Normalization(axis=-1)
         ])
 
         movie_embedding_preprocessing_output = movie_embedding_preprocessing(movie_embedding_input)
-        
+
+        # Genre-aware gate: learns per-movie scalar to suppress/amplify embeddings based on genre
+        embedding_gate = tf.keras.layers.Dense(1, activation='sigmoid', name='embedding_gate')(movie_cat_features_input[:, :])
+        embedding_gate = 0.1 + embedding_gate * 1.9  # scale to [0.1, 2.0]
+        gated_embedding = embedding_gate * movie_embedding_preprocessing_output
+
+        movie_scaled_features = movie_scaler_layer(movie_cat_features_input)
+
         movie_features_concatenation = tf.keras.layers.Concatenate(axis = -1, name = "movie_embedding_concatenate_layer")(
             [
-                movie_cat_features_input, 
-                movie_embedding_preprocessing_output
+                movie_scaled_features,
+                gated_embedding
             ]
         )
         movie_seq = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(units = 512, activation = 'relu'),
-            tf.keras.layers.Dense(units = 256, activation = 'relu'),
+            tf.keras.layers.Dense(units = 256, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
+            tf.keras.layers.Dropout(0.2),
             tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
         ])
         movie_network_output = movie_seq(movie_features_concatenation)
@@ -310,7 +347,7 @@ class Model(mlflow.pyfunc.PythonModel):
         rec_model.summary()
         
         compile_args = {
-            "optimizer": tf.keras.optimizers.Adam(learning_rate=0.1),
+            "optimizer": tf.keras.optimizers.Adam(learning_rate=0.001),
             "loss": {
                 "y_scaled": tf.keras.losses.MeanSquaredError(), # dummy loss function because Model.fit() expects a loss defined in compile() even though we compute the loss inside the custom train_step()
             },
