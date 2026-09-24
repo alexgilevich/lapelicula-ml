@@ -81,9 +81,9 @@ class TrainingKerasModel(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             # positive scores
-            pos_scores = self.base_model([user_matrix, movie_matrix])['y_scaled']
+            pos_scores = self.base_model([user_matrix, movie_matrix, embedding_matrix])['y_scaled']
             # negative scores
-            neg_scores = self.base_model([user_matrix, neg_movies])['y_scaled']
+            neg_scores = self.base_model([user_matrix, neg_movies, embedding_matrix])['y_scaled']
 
             # MSE loss (real ratings)
             mse_loss = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - pos_scores), axis=-1)
@@ -103,14 +103,14 @@ class TrainingKerasModel(tf.keras.Model):
             zip(grads, self.base_model.trainable_variables)
         )
 
-        return self.compute_metrics((user_matrix, movie_matrix, movie_ids), y_true['y_scaled'], pos_scores, mse_loss, rank_loss, total_loss)
+        return self.compute_metrics((user_matrix, movie_matrix, embedding_matrix, movie_ids), y_true['y_scaled'], pos_scores, mse_loss, rank_loss, total_loss)
     
     def test_step(self, data):
         # extract what we pass into the fit function
         (user_matrix, movie_matrix, embedding_matrix), y_true = data
         
         # Compute predictions
-        y_pred = self([user_matrix, movie_matrix], training=False)
+        y_pred = self([user_matrix, movie_matrix, embedding_matrix], training=False)
         
         mse = tf.reduce_mean(tf.math.square(y_true['y_scaled'] - y_pred['y_scaled']))
         mae = tf.reduce_mean(tf.abs(y_true['y_scaled'] - y_pred['y_scaled']))
@@ -265,18 +265,23 @@ class Model(mlflow.pyfunc.PythonModel):
         
         # create the item input and point to the base network
         movie_cat_features_input = tf.keras.layers.Input(shape=(movie_train_split.shape[1],), name = 'movie_cat_features_input_layer')
-        #movie_embedding_input = tf.keras.layers.Input(shape=(embedding_train_split.shape[1],), name = 'movie_embedding_input_layer')
+        movie_embedding_input = tf.keras.layers.Input(shape=(embedding_train_split.shape[1],), name = 'movie_embedding_input_layer')
 
         
-        # movie_embedding_preprocessing = tf.keras.models.Sequential([
-        #     tf.keras.layers.Dense(units = 256, activation = 'relu'),
-        #     tf.keras.layers.Dense(units = 128, activation = 'relu'),
-        #     tf.keras.layers.Dense(units = 16, activation = 'relu'),
-        # ])
+        movie_embedding_preprocessing = tf.keras.models.Sequential([
+            tf.keras.layers.Dense(units = 256, activation = 'relu'),
+            tf.keras.layers.Dense(units = 128, activation = 'relu'),
+            tf.keras.layers.Dense(units = 16, activation = 'relu'),
+        ])
 
-        # movie_embedding_preprocessing_output = movie_embedding_preprocessing(movie_embedding_input)
+        movie_embedding_preprocessing_output = movie_embedding_preprocessing(movie_embedding_input)
         
-        movie_features_concatenation = tf.keras.layers.Concatenate(axis = -1, name = "movie_embedding_concatenate_layer")([movie_cat_features_input])
+        movie_features_concatenation = tf.keras.layers.Concatenate(axis = -1, name = "movie_embedding_concatenate_layer")(
+            [
+                movie_cat_features_input, 
+                movie_embedding_preprocessing_output
+            ]
+        )
         movie_seq = tf.keras.models.Sequential([
             tf.keras.layers.Dense(units = 512, activation = 'relu'),
             tf.keras.layers.Dense(units = 256, activation = 'relu'),
@@ -293,7 +298,7 @@ class Model(mlflow.pyfunc.PythonModel):
         
         # specify the inputs and output of the model
         model = tf.keras.Model(
-            inputs=[user_input, movie_cat_features_input], 
+            inputs=[user_input, movie_cat_features_input, movie_embedding_input], 
             outputs={
                 "y_scaled": dot_product_output,
                 "y_unscaled": unscaled_output
@@ -363,7 +368,7 @@ class Model(mlflow.pyfunc.PythonModel):
             verbose=2
         )
         metrics = {k: v.numpy() for k, v in metrics.items()}
-        preds = model.predict([user_test_split, movie_test_split])
+        preds = model.predict([user_test_split, movie_test_split, embedding_test_split])
         ndcg = self._compute_ndcg_offline(
             y_test_split,
             preds,
@@ -455,7 +460,7 @@ class Model(mlflow.pyfunc.PythonModel):
         user_matrix = np.tile(user_vector, (movies_matrix.shape[0], 1))
 
         # make a prediction
-        y_p = self._tf_model.predict([user_matrix, movies_matrix[:, 1:]], verbose=0)
+        y_p = self._tf_model.predict([user_matrix, movies_matrix[:, 1:], embedding_matrix], verbose=0)
 
         # take the unscaled y prediction 
         y_p_unscaled = y_p["y_unscaled"]
