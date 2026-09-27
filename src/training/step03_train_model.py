@@ -95,6 +95,16 @@ class TrainModelJobStep(JobStep):
             y_labels         = y_pdf.to_numpy(dtype=np.float32)
             all_movies_data = all_movies_pdf.to_numpy(dtype=np.float32)
             embeddings = np.stack(movie_with_embs_train_data_pdf['description_embedding'].apply(lambda x: np.array(x)).values)
+
+            # Diagnostic: train with zeroed embeddings so the model learns to rely
+            # on genres/sentiments/adult only. All learned parameters adapt to a
+            # world without content signal — this is the faithful "pre-embeddings"
+            # model (unlike zeroing at inference, which is out-of-distribution).
+            # NOTE: inference on this artifact must also use DISABLE_EMBEDDINGS=true.
+            if self.config.bool("DISABLE_EMBEDDINGS", False):
+                logger.info("DISABLE_EMBEDDINGS=true — training with zeroed description embeddings")
+                embeddings = np.zeros_like(embeddings)
+
             metrics = model.train(user_train_data, movie_train_data, embeddings, y_labels, all_movies_data)
 
             # log params
