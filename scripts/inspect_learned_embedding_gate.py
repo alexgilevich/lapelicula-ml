@@ -1,13 +1,14 @@
 """
-Inspect the embedding gate weights from the trained model artifact.
-Run after training to see what the gate learned per genre.
+Inspect the LEARNED embedding gate weights from an older trained model artifact
+(models trained before the gate was replaced with a fixed per-genre table).
+Only works with artifacts that contain a learned 'embedding_gate' Dense layer.
 """
 import os
 import numpy as np
 import mlflow
 import tensorflow as tf
 
-DEFAULT_MODEL_LOCAL_SAVE_PATH = "../../model_artifacts/mlflow_models/"
+DEFAULT_MODEL_LOCAL_SAVE_PATH = "../model_artifacts/mlflow_models/"
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-movie-recommender-model-new"
 
 GENRES = [
@@ -41,50 +42,44 @@ def main():
     print(f"Kernel shape: {kernel.shape}, Bias shape: {bias.shape}")
     print(f"Bias value: {bias[0]:.4f}")
 
-    # Per-genre weight, sorted by value (most suppressing first)
+    # Per-genre weight, sorted by value (most negative = most suppressing)
     weights_flat = kernel.flatten()
     sorted_idx = np.argsort(weights_flat)
     print("\nPer-genre weights (most negative = most suppressing):")
     for i in sorted_idx:
-        if i < 11 or i > 28: continue
-        
         bar = "+" * int(abs(weights_flat[i]) * 20) if weights_flat[i] > 0 else "-" * int(abs(weights_flat[i]) * 20)
-        print(f"  {GENRES[i - 11]:15s}  {weights_flat[i]:+.4f}  {bar}")
+        print(f"  {GENRES[i]:15s}  {weights_flat[i]:+.4f}  {bar}")
 
     # --- 2. Compute gate values for test profiles ---
     print("\n=== GATE VALUES FOR TEST GENRE PROFILES ===")
     test_profiles = {
-        "Kids only":              genre_vector("Kids"),
-        "Kids + Animation":       genre_vector("Kids", "Animation"),
-        "Animation only":         genre_vector("Animation"),
-        "Horror only":            genre_vector("Horror"),
-        "Horror + Thriller":      genre_vector("Horror", "Thriller"),
-        "Crime + Drama":          genre_vector("Crime", "Drama"),
-        "Crime + Drama + Western": genre_vector("Crime", "Drama", "Western"),
-        "Sci-Fi + Action":        genre_vector("Sci-Fi", "Action"),
-        "Mystery + Drama":        genre_vector("Mystery", "Drama"),
-        "Comedy + Romance":       genre_vector("Comedy", "Romance"),
-        "War only":               genre_vector("War"),
-        "Western only":           genre_vector("Western"),
-        "Drama only":             genre_vector("Drama"),
+        "Kids only":                genre_vector("Kids"),
+        "Kids + Animation":         genre_vector("Kids", "Animation"),
+        "Animation only":           genre_vector("Animation"),
+        "Horror only":              genre_vector("Horror"),
+        "Horror + Thriller":        genre_vector("Horror", "Thriller"),
+        "Crime + Drama":            genre_vector("Crime", "Drama"),
+        "Crime + Drama + Western":  genre_vector("Crime", "Drama", "Western"),
+        "Sci-Fi + Action":          genre_vector("Sci-Fi", "Action"),
+        "Mystery + Drama":          genre_vector("Mystery", "Drama"),
+        "Comedy + Romance":         genre_vector("Comedy", "Romance"),
+        "War only":                 genre_vector("War"),
+        "Western only":             genre_vector("Western"),
+        "Drama only":               genre_vector("Drama"),
     }
 
-    k = kernel[11 : 11 + 18, :] # (18, 1)
+    k = kernel  # (18, 1) — genres only now
     b = bias[0]  # scalar
 
-    print(f"\n{'Profile':30s}  {'Logit':>8s}  {'Sigmoid':>8s}  {'Gate [0.1-2.0]':>15s}")
-    print("-" * 65)
+    print(f"\n{'Profile':30s}  {'Logit':>8s}  {'Sigmoid':>8s}  {'Gate [0-1]':>12s}")
+    print("-" * 62)
     for name, vec in test_profiles.items():
         logit = float(vec @ k.flatten() + b)
         sig = float(1.0 / (1.0 + np.exp(-logit)))
-        gate = 0.1 + sig * 1.9
-        print(f"{name:30s}  {logit:+8.4f}  {sig:8.4f}  {gate:15.4f}")
+        print(f"{name:30s}  {logit:+8.4f}  {sig:8.4f}  {sig:12.4f}")
 
     # --- 3. Check embedding preprocessing output scale ---
     print("\n=== EMBEDDING SCALE CHECK ===")
-    # Find the Normalization layer inside the embedding preprocessing
-    # The embedding preprocessing is a Sequential sub-model
-    # Look for Normalization layers in the base model
     norm_layers = [l for l in base.layers if isinstance(l, tf.keras.layers.Normalization)]
     for nl in norm_layers:
         print(f"Normalization layer '{nl.name}': mean shape={nl.mean.shape}, "
