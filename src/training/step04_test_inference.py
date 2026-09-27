@@ -70,7 +70,15 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
         all_movies_without_embs_pdf = all_movies_with_embs_pdf.drop(columns=['description_embedding'])
         all_movies_without_embs_data = all_movies_without_embs_pdf.to_numpy(dtype=np.float32)
         embeddings = np.stack(all_movies_with_embs_pdf['description_embedding'].apply(lambda x: np.array(x)).values)
-        
+
+        # Diagnostic: with DISABLE_EMBEDDINGS=true the embedding path receives zeros,
+        # so it produces a constant (bias-only) vector per movie genre — no content
+        # signal. Recommendations then depend only on genres/sentiments/adult,
+        # i.e. the same behavior as before embeddings were added.
+        if self.config.bool("DISABLE_EMBEDDINGS", False):
+            logger.info("DISABLE_EMBEDDINGS=true — zeroing out all description embeddings for this diagnostic run")
+            embeddings = np.zeros_like(embeddings)
+
         model = mlflow.pyfunc.load_model(full_local_model_save_path)
         examples = [
             UserPreferences(kids = 5, animation = 5, adventure = 0, comedy = 0, mystery = 0, crime = 0, horror = 0, sci_fi = 0),
