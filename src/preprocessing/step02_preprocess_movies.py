@@ -33,7 +33,7 @@ class PreprocessMoviesJobStep(JobStep):
     - OVERWRITE: 'true' to overwrite
     - ENABLE_WEIGHTED_AVERAGE: 'false' | 'true'
     - ENABLE_EXTRA_MOVIE_FEATURES: 'false' | 'true'
-    - GENRES_N_CLUSTERS: comma-separated integers, default '45,100'
+    - GENRES_N_CLUSTERS: comma-separated integers, default '45,100,300'
     """
 
     def __init__(self, spark: SparkSession, config: Config, dataframe_writer: DataFrameWriter):
@@ -44,11 +44,11 @@ class PreprocessMoviesJobStep(JobStep):
         self._movies_shortlist_df: DataFrame | None = None
 
     def _parse_clusters(self) -> List[int]:
-        raw = self.config.string("GENRES_N_CLUSTERS", "45,100")
+        raw = self.config.string("GENRES_N_CLUSTERS", "45,100,300")
         try:
             return [int(x.strip()) for x in raw.split(',') if x.strip()]
         except Exception:
-            return [45, 100]
+            return [45, 100, 300]
 
     def load(self) -> None:
         self._bronze_movies_df = self.spark.table("bronze_movies")

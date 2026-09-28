@@ -1,9 +1,20 @@
 """
-Inspect the LEARNED embedding gate weights from an older trained model artifact
-(models trained before the gate was replaced with a fixed per-genre table).
-Only works with artifacts that contain a learned 'embedding_gate' Dense layer.
+Inspect the LEARNED embedding gate weights from a trained model artifact.
+
+The gate is a Dense(1, sigmoid) layer over all 30 raw movie features
+(11 sentiments + 18 genres + adult), rescaled to [0.1, 1.0]:
+
+    gate = 0.1 + 0.9 * sigmoid(features @ W + b)
+
+It is initialized low (bias = -1.0 → sigmoid ≈ 0.27 → gate start ≈ 0.34)
+so embeddings start at ~34% influence and the gate only learns to amplify
+toward 1.0 where the loss says embedding signal is useful.
+
+Run after step03 with the artifact in model_artifacts/mlflow_models/<name>
+(update DEFAULT_MLFLOW_MODEL_NAME if you saved it under a different name).
 """
 import os
+
 import numpy as np
 import mlflow
 import tensorflow as tf
@@ -11,19 +22,23 @@ import tensorflow as tf
 DEFAULT_MODEL_LOCAL_SAVE_PATH = "../model_artifacts/mlflow_models/"
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-movie-recommender-model-new"
 
-GENRES = [
-    'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
-    'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical',
-    'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western'
-]
+SENTIMENTS = ["anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust"]
+GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
+FEATURES = SENTIMENTS + GENRES + ["adult"]
 
 
-def genre_vector(*genres: str) -> np.ndarray:
-    """Build a one-hot genre vector (18,) for the given genre names."""
-    vec = np.zeros(18, dtype=np.float32)
+def movie_vector(*genres: str, adult: bool = False, **sentiments: float) -> np.ndarray:
+    """Build a 30-dim raw movie feature vector: [11 sentiments, 18 genre one-hots, adult].
+
+    Sentiments default to 0.0; genre bits are 1.0 for the given genres.
+    """
+    vec = np.zeros(30, dtype=np.float32)
+    for name, value in sentiments.items():
+        vec[SENTIMENTS.index(name)] = value
     for g in genres:
-        idx = GENRES.index(g)
-        vec[idx] = 1.0
+        vec[len(SENTIMENTS) + GENRES.index(g)] = 1.0
+    if adult:
+        vec[-1] = 1.0
     return vec
 
 
@@ -36,47 +51,51 @@ def main():
 
     # --- 1. Gate weights ---
     gate_layer = base.get_layer("embedding_gate")
-    kernel, bias = gate_layer.get_weights()  # kernel: (18, 1), bias: (1,)
+    kernel, bias = gate_layer.get_weights()  # kernel: (30, 1), bias: (1,)
 
-    print("\n=== EMBEDDING GATE WEIGHTS ===")
+    print("\n=== EMBEDDING GATE WEIGHTS (30 features) ===")
     print(f"Kernel shape: {kernel.shape}, Bias shape: {bias.shape}")
-    print(f"Bias value: {bias[0]:.4f}")
+    print(f"Bias value: {bias[0]:.4f} (init was -1.0 → sigmoid ≈ 0.27 → gate start ≈ 0.34)")
 
-    # Per-genre weight, sorted by value (most negative = most suppressing)
+    # Per-feature weight, sorted by value (most negative = most suppressing)
     weights_flat = kernel.flatten()
     sorted_idx = np.argsort(weights_flat)
-    print("\nPer-genre weights (most negative = most suppressing):")
+    print("\nPer-feature weights (most negative = most suppressing):")
     for i in sorted_idx:
-        bar = "+" * int(abs(weights_flat[i]) * 20) if weights_flat[i] > 0 else "-" * int(abs(weights_flat[i]) * 20)
-        print(f"  {GENRES[i]:15s}  {weights_flat[i]:+.4f}  {bar}")
+        w = weights_flat[i]
+        bar = "+" * int(abs(w) * 20) if w > 0 else "-" * int(abs(w) * 20)
+        print(f"  {FEATURES[i]:15s}  {w:+.4f}  {bar}")
 
     # --- 2. Compute gate values for test profiles ---
-    print("\n=== GATE VALUES FOR TEST GENRE PROFILES ===")
+    print("\n=== GATE VALUES FOR TEST MOVIE PROFILES ===")
+    # Synthetic raw feature vectors: genre one-hots, sentiments 0, adult as noted
     test_profiles = {
-        "Kids only":                genre_vector("Kids"),
-        "Kids + Animation":         genre_vector("Kids", "Animation"),
-        "Animation only":           genre_vector("Animation"),
-        "Horror only":              genre_vector("Horror"),
-        "Horror + Thriller":        genre_vector("Horror", "Thriller"),
-        "Crime + Drama":            genre_vector("Crime", "Drama"),
-        "Crime + Drama + Western":  genre_vector("Crime", "Drama", "Western"),
-        "Sci-Fi + Action":          genre_vector("Sci-Fi", "Action"),
-        "Mystery + Drama":          genre_vector("Mystery", "Drama"),
-        "Comedy + Romance":         genre_vector("Comedy", "Romance"),
-        "War only":                 genre_vector("War"),
-        "Western only":             genre_vector("Western"),
-        "Drama only":               genre_vector("Drama"),
+        "Kids only":                    movie_vector("Kids"),
+        "Kids + Animation":             movie_vector("Kids", "Animation"),
+        "Animation only":               movie_vector("Animation"),
+        "Horror only":                  movie_vector("Horror"),
+        "Horror + Thriller (adult)":    movie_vector("Horror", "Thriller", adult=True),
+        "Crime + Drama (adult)":        movie_vector("Crime", "Drama", adult=True),
+        "Crime + Drama + Western":      movie_vector("Crime", "Drama", "Western"),
+        "Sci-Fi + Action":              movie_vector("Sci-Fi", "Action"),
+        "Mystery + Drama":              movie_vector("Mystery", "Drama"),
+        "Comedy + Romance":             movie_vector("Comedy", "Romance"),
+        "War only (adult)":             movie_vector("War", adult=True),
+        "Western only":                 movie_vector("Western"),
+        "Drama only":                   movie_vector("Drama"),
+        "Drama only (adult)":           movie_vector("Drama", adult=True),
     }
 
-    k = kernel  # (18, 1) — genres only now
+    k = kernel.flatten()  # (30,)
     b = bias[0]  # scalar
 
-    print(f"\n{'Profile':30s}  {'Logit':>8s}  {'Sigmoid':>8s}  {'Gate [0-1]':>12s}")
+    print(f"\n{'Profile':30s}  {'Logit':>8s}  {'Sigmoid':>8s}  {'Gate [0.1-1]':>12s}")
     print("-" * 62)
     for name, vec in test_profiles.items():
-        logit = float(vec @ k.flatten() + b)
+        logit = float(vec @ k + b)
         sig = float(1.0 / (1.0 + np.exp(-logit)))
-        print(f"{name:30s}  {logit:+8.4f}  {sig:8.4f}  {sig:12.4f}")
+        gate = 0.1 + 0.9 * sig
+        print(f"{name:30s}  {logit:+8.4f}  {sig:8.4f}  {gate:12.4f}")
 
     # --- 3. Check embedding preprocessing output scale ---
     print("\n=== EMBEDDING SCALE CHECK ===")

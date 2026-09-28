@@ -25,7 +25,7 @@ DEFAULT_MODEL_LOCAL_SAVE_PATH = "../../model_artifacts/mlflow_models/"
 logger = get_logger(__name__)
 
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-recommender-model"
-DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 256
+DEFAULT_NUM_MODEL_LAYER_OUTPUTS = 32
 DEFAULT_NUM_EPOCHS = 10
 
 class TrainModelJobStep(JobStep):

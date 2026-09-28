@@ -286,7 +286,7 @@ class Model(mlflow.pyfunc.PythonModel):
         user_input = tf.keras.layers.Input(shape=(user_train_split.shape[1],), name = 'user_input_layer')
         user_seq = tf.keras.models.Sequential([
             user_scaler_layer,
-            tf.keras.layers.Dense(units = 256, activation = 'relu'),
+            tf.keras.layers.Dense(units = 128, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
             tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
         ])
         user_output = L2Norm(axis=1)(user_seq(user_input), name = 'user_l2_normalization_layer')
@@ -299,20 +299,27 @@ class Model(mlflow.pyfunc.PythonModel):
         
         movie_embedding_preprocessing = tf.keras.models.Sequential([
             tf.keras.layers.Dense(units = 128, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(units = 16, activation = 'relu'),
+            tf.keras.layers.Dense(units = 32, activation = 'relu'),
             tf.keras.layers.Normalization(axis=-1)
         ])
 
         movie_embedding_preprocessing_output = movie_embedding_preprocessing(movie_embedding_input)
 
         # Genre-aware gate: learns per-movie scalar to suppress/amplify embeddings based on genre
-        embedding_gate = tf.keras.layers.Dense(1, activation='sigmoid', name='embedding_gate')(movie_cat_features_input[:, :])
-        embedding_gate = 0.1 + embedding_gate * 1.9  # scale to [0.1, 2.0]
+        # Low bias init: sigmoid(-1)≈0.27 → gate starts at 0.1+0.9*0.27≈0.34,
+        # so embeddings start at ~34% influence and the gate only learns to
+        # amplify (up to 1.0) where the loss says it is important
+        embedding_gate = tf.keras.layers.Dense(
+            1,
+            activation='sigmoid',
+            bias_initializer=tf.constant_initializer(-1.0),
+            name='embedding_gate'
+        )(movie_cat_features_input[:, :])
+        embedding_gate = 0.1 + embedding_gate * 0.9  # scale to [0.1, 1.0]
         gated_embedding = embedding_gate * movie_embedding_preprocessing_output
 
         movie_scaled_features = movie_scaler_layer(movie_cat_features_input)
-
+        
         movie_features_concatenation = tf.keras.layers.Concatenate(axis = -1, name = "movie_embedding_concatenate_layer")(
             [
                 movie_scaled_features,
@@ -320,8 +327,8 @@ class Model(mlflow.pyfunc.PythonModel):
             ]
         )
         movie_seq = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(units = 256, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(units = 128, activation = 'relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
+            tf.keras.layers.Dense(units = 64, activation = 'relu'),
             tf.keras.layers.Dense(units = self.num_outputs, activation = 'linear')
         ])
         movie_network_output = movie_seq(movie_features_concatenation)
