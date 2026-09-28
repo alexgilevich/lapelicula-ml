@@ -36,11 +36,11 @@ class GenerateSyntheticUsersJobStep(JobStep):
         self._ratings_df: DataFrame | None = None
 
     def _parse_clusters(self):
-        raw = self.config.string("GENRES_N_CLUSTERS", "45,100")
+        raw = self.config.string("GENRES_N_CLUSTERS", "45,100,300")
         try:
             return [int(x.strip()) for x in raw.split(',') if x.strip()]
         except Exception:
-            return [45, 100]
+            return [45, 100, 300]
 
     def load(self) -> None:
         self._ratings_df = self.spark.table("bronze_ratings")
