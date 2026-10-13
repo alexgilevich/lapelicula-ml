@@ -3,26 +3,17 @@
 
 import os
 
-import pandas as pd
-from pyspark.sql.types import * 
-
 import _includes
 import mlflow
-from features import UserPreferences
-from mlflow_utils import MLFlowModelManager
-from model import Model
 from dependency_injector.wiring import inject, Provide
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession
 from containers import ContainerFactory
 from dataframe import DataFrameWriter
-from pyspark.sql import functions as F
 from config import Config, SecretsManager
 from job_step import JobStep
 from logging_factory import get_logger
-from mlflow.models import infer_signature
-import boto3
-import shutil
-import numpy as np
+from mlflow_utils import MLFlowModelManager
+from inference_test import prepare_inference_input, run_inference_test, build_recommendations_df, DEFAULT_INFERENCE_LIMIT
 
 DEFAULT_MODEL_LOCAL_SAVE_PATH = "../../model_artifacts/mlflow_models/"
 
@@ -58,68 +49,15 @@ class TestInferenceWithTrainedModelJobStep(JobStep):
         model_name = self.config.string("MLFLOW_MODEL_NAME", DEFAULT_MLFLOW_MODEL_NAME)
         local_model_save_path = self.config.int("MODEL_LOCAL_SAVE_PATH", DEFAULT_MODEL_LOCAL_SAVE_PATH)
         full_local_model_save_path = os.path.join(local_model_save_path, model_name)
-        
-        inference_params = { "limit": 3000 }
 
-        MOVIE_COLUMNS = ['movie_id', 
-                                "anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust", 
-                                'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western', 
-                                'description_embedding',
-                                'adult']
-        all_movies_with_embs_pdf = self._gold_movies_df.select(*MOVIE_COLUMNS).toPandas()
-        all_movies_without_embs_pdf = all_movies_with_embs_pdf.drop(columns=['description_embedding'])
-        all_movies_without_embs_data = all_movies_without_embs_pdf.to_numpy(dtype=np.float32)
-        embeddings = np.stack(all_movies_with_embs_pdf['description_embedding'].apply(lambda x: np.array(x)).values)
-
-        # Diagnostic: with DISABLE_EMBEDDINGS=true the embedding path receives zeros,
-        # so it produces a constant (bias-only) vector per movie genre — no content
-        # signal. Recommendations then depend only on genres/sentiments/adult,
-        # i.e. the same behavior as before embeddings were added.
-        if self.config.bool("DISABLE_EMBEDDINGS", False):
-            logger.info("DISABLE_EMBEDDINGS=true — zeroing out all description embeddings for this diagnostic run")
-            embeddings = np.zeros_like(embeddings)
-
+        movies_data, embeddings = prepare_inference_input(self._gold_movies_df, self.config)
+        inference_params = { "limit": DEFAULT_INFERENCE_LIMIT }
         model = mlflow.pyfunc.load_model(full_local_model_save_path)
-        examples = [
-            UserPreferences(kids = 5, animation = 5, adventure = 0, comedy = 0, mystery = 0, crime = 0, horror = 0, sci_fi = 0),
-            UserPreferences(action = 5, adventure = 3.5, mystery = 4, horror = 1, sci_fi = 4, western = 3, drama = 3, animation = 0.5),
-            UserPreferences(kids = 5, animation = 5, adventure = 4.5, comedy = 4.5, mystery = 2, crime = 1, horror = 0.5, sci_fi = 4),
-            UserPreferences( comedy = 4.5, romance = 5, mystery = 2, crime = 0.5, horror = 0.5, sci_fi = 1.5),
-            UserPreferences(kids = 5, animation = 5, adventure = 4.5),
-            UserPreferences(action = 5,  sci_fi = 4.5 ),
-            UserPreferences(comedy = 4.5,  romance = 4.5 ),
-            UserPreferences(war=5),
-            UserPreferences(western=5),
-            UserPreferences(kids=5),
-            UserPreferences(horror=5),
-            UserPreferences(thriller=5),
-            UserPreferences(drama=5),
-            UserPreferences(film_noir=5),
-        ]
-        
-        for i, example in enumerate(examples):
-            sorted_dict = { k: v for k, v in sorted(example.to_dict().items(), key = lambda item: -item[1]) }
-            print(f"Predicting for user ###{i + 1}: ", sorted_dict) 
-            input = pd.DataFrame([{
-                "user_preferences": sorted_dict,
-                "movies": all_movies_without_embs_data,
-                "embeddings": embeddings
-            }])
-            predictions = model.predict(input, inference_params)
-            #logger.info("loaded: %s", predictions)
-            recommendations = [(int(movie_id), float(rating)) for movie_id, rating in predictions[0]]
-            recommendations_df = self.spark.createDataFrame(recommendations, schema=StructType([
-                StructField(name="movie_id", dataType=IntegerType(), nullable=True),
-                StructField(name="rating", dataType=StringType(), nullable=True)
-            ]))
-            recommendations_df\
-                .join(self._gold_movies_df, 'movie_id', how='inner')\
-                .withColumn('rn', F.expr('row_number() over(order by rating desc)'))\
-                .select('movie_id', 'rating', 'title', 'genres', 'year', 'rating_count', 'top_sentiments', 'vote_average')\
-                .show(150,  truncate = False)
-            
+
+        for result in run_inference_test(model, movies_data, embeddings, inference_params):
+            print(f"Predicting for user ###{result['user_index']}: ", result['preferences'])
+            build_recommendations_df(self.spark, self._gold_movies_df, result['recommendations']).show(150, truncate=False)
             print("\n\n\n\n")
-        #logger.info("Model max output difference is: %f", np.max(np.abs(np.array(orig)[:, 1:] - np.array(loaded)[:, 1:])))
 
     
 
