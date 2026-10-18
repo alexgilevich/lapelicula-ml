@@ -43,28 +43,42 @@ class SyncDataToDynamoDbJobStep(JobStep):
             return False
 
     def load(self) -> None:
-        self._movies_df = self.spark.table("movies_enriched")
+        self._movies_df = self.spark.table("gold_movie")
 
     def process(self) -> None:
+        THRESHOLD = 0.5
         self._movies_df = self._movies_df.select(
-            F.col("movieId").alias("movie_id"),
-            F.col("genres").alias("genres"),
+            F.col("movie_id"),
+            F.col("genres"),
+            F.col("genres_encoded"),
             F.col("year").alias("year"),
-            F.col("rating_count").alias("rating_count"),
-            F.col("rating_avg").alias("rating_avg"),
-            F.col("tmdbId").alias("tmdb_id"),
-            F.col("imdbId").alias("imdb_id"),
-            F.col("title").alias("title"),
-            F.col("description").alias("description"),
-            F.col("poster_uri").alias("poster_uri"),
-            F.col("budget").alias("budget"),
+            F.col("rating_count"),
+            F.col("rating_avg"),
+            F.col("tmdb_id"),
+            F.col("imdb_id"),
+            F.col("title"),
+            F.col("description"),
+            F.col("description_embedding"),
+            F.col("poster_uri"),
+            F.col("budget"),
             F.col("release_date").cast(T.StringType()).alias("release_date"),
-            F.col("origin_countries").alias("origin_countries"),
-            F.col("production_countries").alias("production_countries"),
-            F.col("vote_average").alias("vote_average"),
-            F.col("revenue").alias("revenue"),
-            F.col("tagline").alias("tagline"),
-            F.col("adult").alias("adult"),
+            F.col("origin_countries"),
+            F.col("production_countries"),
+            F.col("vote_average"),
+            F.col("revenue"),
+            F.col("tagline"),
+            F.col("adult"),
+            (F.col("anger") >= THRESHOLD).alias("anger"),
+            (F.col("contempt") >= THRESHOLD).alias("contempt"),
+            (F.col("disgust") >= THRESHOLD).alias("disgust"),
+            (F.col("fear") >= THRESHOLD).alias("fear"),
+            (F.col("frustration") >= THRESHOLD).alias("frustration"),
+            (F.col("gratitude") >= THRESHOLD).alias("gratitude"),
+            (F.col("joy") >= THRESHOLD).alias("joy"),
+            (F.col("love") >= THRESHOLD).alias("love"),
+            (F.col("neutral") >= THRESHOLD).alias("neutral"),
+            (F.col("sadness") >= THRESHOLD).alias("sadness"),
+            (F.col("surprise") >= THRESHOLD).alias("surprise")
         ).dropDuplicates(["movie_id"])
     
 
@@ -114,7 +128,6 @@ class SyncDataToDynamoDbJobStep(JobStep):
                                                 aws_secret_access_key=secret_key,
                                                 region_name=region)
 
-
             with dynamodb_resource.Table(table_name).batch_writer() as writer:
                 for row in partition:
                     writer.put_item(Item={
@@ -136,8 +149,19 @@ class SyncDataToDynamoDbJobStep(JobStep):
                         "origin_countries": row["origin_countries"],
                         "production_countries": row["production_countries"],
                         "adult": row["adult"],
+                        "anger": row["anger"], 
+                        "contempt": row["contempt"],
+                        "disgust": row["disgust"],
+                        "fear": row["fear"],
+                        "frustration": row["frustration"],
+                        "gratitude": row["gratitude"],
+                        "joy": row["joy"],
+                        "love": row["love"],
+                        "neutral": row["neutral"],
+                        "sadness": row["sadness"],
+                        "surprise": row["surprise"]
                     })
-            return _process
+                    
 
         return _process
 
