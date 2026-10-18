@@ -31,7 +31,9 @@ task_files = [
     "step05_oversample_ratings",
     "step06_enrich_movies",
     "step07_generate_embeddings",
-    "step08_sync_to_dynamodb"
+    "step08_detect_sentiment",
+    "step09_save_gold_movies",
+    "step10_sync_to_dynamodb"
 ]
 tasks = [
     Task(
