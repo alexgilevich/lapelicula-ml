@@ -27,6 +27,7 @@ task_files = [
     "step01_generate_training_data",
     "step02_split_training_data",
     "step03_train_model",
+    "step04_test_inference"
 ]
 tasks = [
     Task(
