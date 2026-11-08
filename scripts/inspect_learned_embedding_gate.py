@@ -13,17 +13,49 @@ toward 1.0 where the loss says embedding signal is useful.
 Run after step03 with the artifact in model_artifacts/mlflow_models/<name>
 (update DEFAULT_MLFLOW_MODEL_NAME if you saved it under a different name).
 """
+
 import os
 
-import numpy as np
 import mlflow
+import numpy as np
 import tensorflow as tf
 
 DEFAULT_MODEL_LOCAL_SAVE_PATH = "../model_artifacts/mlflow_models/"
 DEFAULT_MLFLOW_MODEL_NAME = "lapelicula-movie-recommender-model-new"
 
-SENTIMENTS = ["anger", "anticipation", "disgust", "fear", "joy", "love", "optimism", "pessimism", "sadness", "surprise", "trust"]
-GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Kids', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
+SENTIMENTS = [
+    "anger",
+    "anticipation",
+    "disgust",
+    "fear",
+    "joy",
+    "love",
+    "optimism",
+    "pessimism",
+    "sadness",
+    "surprise",
+    "trust",
+]
+GENRES = [
+    "Action",
+    "Adventure",
+    "Animation",
+    "Comedy",
+    "Crime",
+    "Documentary",
+    "Drama",
+    "Fantasy",
+    "Film-Noir",
+    "Horror",
+    "Kids",
+    "Musical",
+    "Mystery",
+    "Romance",
+    "Sci-Fi",
+    "Thriller",
+    "War",
+    "Western",
+]
 FEATURES = SENTIMENTS + GENRES + ["adult"]
 
 
@@ -70,20 +102,20 @@ def main():
     print("\n=== GATE VALUES FOR TEST MOVIE PROFILES ===")
     # Synthetic raw feature vectors: genre one-hots, sentiments 0, adult as noted
     test_profiles = {
-        "Kids only":                    movie_vector("Kids"),
-        "Kids + Animation":             movie_vector("Kids", "Animation"),
-        "Animation only":               movie_vector("Animation"),
-        "Horror only":                  movie_vector("Horror"),
-        "Horror + Thriller (adult)":    movie_vector("Horror", "Thriller", adult=True),
-        "Crime + Drama (adult)":        movie_vector("Crime", "Drama", adult=True),
-        "Crime + Drama + Western":      movie_vector("Crime", "Drama", "Western"),
-        "Sci-Fi + Action":              movie_vector("Sci-Fi", "Action"),
-        "Mystery + Drama":              movie_vector("Mystery", "Drama"),
-        "Comedy + Romance":             movie_vector("Comedy", "Romance"),
-        "War only (adult)":             movie_vector("War", adult=True),
-        "Western only":                 movie_vector("Western"),
-        "Drama only":                   movie_vector("Drama"),
-        "Drama only (adult)":           movie_vector("Drama", adult=True),
+        "Kids only": movie_vector("Kids"),
+        "Kids + Animation": movie_vector("Kids", "Animation"),
+        "Animation only": movie_vector("Animation"),
+        "Horror only": movie_vector("Horror"),
+        "Horror + Thriller (adult)": movie_vector("Horror", "Thriller", adult=True),
+        "Crime + Drama (adult)": movie_vector("Crime", "Drama", adult=True),
+        "Crime + Drama + Western": movie_vector("Crime", "Drama", "Western"),
+        "Sci-Fi + Action": movie_vector("Sci-Fi", "Action"),
+        "Mystery + Drama": movie_vector("Mystery", "Drama"),
+        "Comedy + Romance": movie_vector("Comedy", "Romance"),
+        "War only (adult)": movie_vector("War", adult=True),
+        "Western only": movie_vector("Western"),
+        "Drama only": movie_vector("Drama"),
+        "Drama only (adult)": movie_vector("Drama", adult=True),
     }
 
     k = kernel.flatten()  # (30,)
@@ -99,17 +131,21 @@ def main():
 
     # --- 3. Check embedding preprocessing output scale ---
     print("\n=== EMBEDDING SCALE CHECK ===")
-    norm_layers = [l for l in base.layers if isinstance(l, tf.keras.layers.Normalization)]
+    norm_layers = [layer for layer in base.layers if isinstance(layer, tf.keras.layers.Normalization)]
     for nl in norm_layers:
-        print(f"Normalization layer '{nl.name}': mean shape={nl.mean.shape}, "
-              f"mean[:5]={nl.mean.numpy().flatten()[:5] if nl.mean is not None else 'NOT ADAPTED'}")
+        print(
+            f"Normalization layer '{nl.name}': mean shape={nl.mean.shape}, "
+            f"mean[:5]={nl.mean.numpy().flatten()[:5] if nl.mean is not None else 'NOT ADAPTED'}"
+        )
 
     # Check the embedding preprocessing Dense layer weights scale
     for layer in base.layers:
         if "dense" in layer.name.lower() and layer.get_weights():
             w = layer.get_weights()[0]
-            print(f"Layer '{layer.name}': weight shape={w.shape}, "
-                  f"mean={np.mean(w):.4f}, std={np.std(w):.4f}, max_abs={np.max(np.abs(w)):.4f}")
+            print(
+                f"Layer '{layer.name}': weight shape={w.shape}, "
+                f"mean={np.mean(w):.4f}, std={np.std(w):.4f}, max_abs={np.max(np.abs(w)):.4f}"
+            )
 
 
 if __name__ == "__main__":

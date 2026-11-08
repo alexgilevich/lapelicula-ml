@@ -23,6 +23,8 @@ variables:
     default: default
   run_as:
     description: Service principal to use to run the jobs
+  movie_api_url:
+    description: Base URL of the Internal Movie Management API used by the sync step
 
 run_as:
   service_principal_name: ${var.run_as}

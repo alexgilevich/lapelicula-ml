@@ -34,16 +34,40 @@ dependencies = [
 dev = [
     "pytest",
     "databricks-dlt",
-#    "databricks-connect>=15.4,<17.0",
+    #    "databricks-connect>=15.4,<17.0",
     "databricks-bundles==0.277.0",
+    "ruff>=0.17.4",
+    "pre-commit>=4.7.0",
 ]
 
 [project.scripts]
-#main = "aaaa.main:main"
+step01_extract_raw_data = "lapelicula.recommender.jobs.preprocessing.step01_extract_raw_data:main"
+step02_preprocess_movies = "lapelicula.recommender.jobs.preprocessing.step02_preprocess_movies:main"
+step03_generate_synthetic_users = "lapelicula.recommender.jobs.preprocessing.step03_generate_synthetic_users:main"
+step04_build_user_features = "lapelicula.recommender.jobs.preprocessing.step04_build_user_features:main"
+step05_oversample_ratings = "lapelicula.recommender.jobs.preprocessing.step05_oversample_ratings:main"
+step06_enrich_movies = "lapelicula.recommender.jobs.preprocessing.step06_enrich_movies:main"
+step07_generate_embeddings = "lapelicula.recommender.jobs.preprocessing.step07_generate_embeddings:main"
+step08_detect_sentiment = "lapelicula.recommender.jobs.preprocessing.step08_detect_sentiment:main"
+step09_save_gold_movies = "lapelicula.recommender.jobs.preprocessing.step09_save_gold_movies:main"
+step10_sync_to_api = "lapelicula.recommender.jobs.preprocessing.step10_sync_to_api:main"
+step01_generate_training_data = "lapelicula.recommender.jobs.training.step01_generate_training_data:main"
+step02_split_training_data = "lapelicula.recommender.jobs.training.step02_split_training_data:main"
+step03_train_model = "lapelicula.recommender.jobs.training.step03_train_model:main"
+step04_test_inference = "lapelicula.recommender.jobs.training.step04_test_inference:main"
 
-#[build-system]
-#requires = ["hatchling"]
-#build-backend = "hatchling.build"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.black]
+[tool.hatch.build.targets.wheel]
+packages = ["src/lapelicula"]
+
+[tool.ruff]
 line-length = 125
+target-version = "py311"
+src = ["src", "scripts", "resources"]
+extend-exclude = ["scratch"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

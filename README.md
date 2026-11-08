@@ -129,7 +129,7 @@ $ python3 step03_generate_synthetic_users.py
 $ python3 step04_build_user_features.py
 $ python3 step05_oversample_ratings.py
 $ python3 step06_enrich_movies.py
-$ python3 step07_sync_to_dynamodb.py
+$ python3 step10_sync_to_api.py
 
 # Run training + inference on the test users
 $ cd src/training
